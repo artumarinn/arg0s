@@ -1,0 +1,26 @@
+# binaries
+/bin/
+/arg0s
+/arg0sd
+
+# secrets
+.env
+*.env
+
+# data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# go
+*.test
+*.out
+/vendor/
+
+# editor / os
+.DS_Store
+
+# tooling state (Claude Code / Agent Teams Lite), no es parte del proyecto
+.claude/
+.atl/

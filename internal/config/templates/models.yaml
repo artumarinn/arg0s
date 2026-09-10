@@ -1,0 +1,88 @@
+version: 1
+
+# IMPORTANTE: los IDs de modelo cambian seguido. `arg0s models sync`
+# consulta cada provider y actualiza este archivo. Los precios se
+# ingresan a mano porque los providers no siempre los exponen.
+#
+# Los provider_model_id de este catálogo son placeholders realistas al
+# momento de escribir la spec (ver docs/ARG0S.md sección 0, punto 6) —
+# verificalos con `arg0s models sync` antes de confiar en ellos.
+
+models:
+
+  # ── Gemini ───────────────────────────────────────────────
+  gemini-flash:
+    provider: gemini
+    provider_model_id: gemini-2.5-flash
+    context_window: 1000000
+    max_output_tokens: 8192
+    cost:
+      input_per_1m_usd: 0.30
+      output_per_1m_usd: 2.50
+    capabilities: [text, code, vision, json_mode, tools, streaming]
+    strengths: [general, coding, speed]
+    tier: medium
+    local: false
+
+  gemini-pro:
+    provider: gemini
+    provider_model_id: gemini-2.5-pro
+    context_window: 2000000
+    max_output_tokens: 65536
+    cost:
+      input_per_1m_usd: 1.25
+      output_per_1m_usd: 10.00
+    capabilities: [text, code, vision, json_mode, tools, streaming, reasoning]
+    strengths: [architecture, reasoning, long_context]
+    tier: complex
+    local: false
+
+  # ── Locales vía Ollama ───────────────────────────────────
+  qwen-coder-7b:
+    provider: ollama
+    provider_model_id: qwen2.5-coder:7b
+    context_window: 32768
+    max_output_tokens: 4096
+    cost: { input_per_1m_usd: 0.0, output_per_1m_usd: 0.0 }
+    capabilities: [text, code, json_mode, streaming]
+    strengths: [speed, classification, simple_coding]
+    tier: simple
+    local: true
+    hardware:
+      min_ram_gb: 8
+      recommended_vram_gb: 6
+
+  qwen-coder-14b:
+    provider: ollama
+    provider_model_id: qwen2.5-coder:14b
+    context_window: 32768
+    max_output_tokens: 8192
+    cost: { input_per_1m_usd: 0.0, output_per_1m_usd: 0.0 }
+    capabilities: [text, code, json_mode, streaming]
+    strengths: [coding, review, privacy]
+    tier: medium
+    local: true
+    hardware:
+      min_ram_gb: 16
+      recommended_vram_gb: 12
+
+  # ── OpenRouter (plantilla) ───────────────────────────────
+  or-free-large:
+    provider: openrouter
+    provider_model_id: "<completar-con-models-sync>"
+    context_window: 128000
+    max_output_tokens: 8192
+    cost: { input_per_1m_usd: 0.0, output_per_1m_usd: 0.0 }
+    capabilities: [text, code, streaming]
+    strengths: [fallback]
+    tier: medium
+    local: false
+    notes: "Modelos free de OpenRouter tienen rate limits agresivos. Solo fallback."
+
+# Aliases: nombres estables que apuntan a modelos concretos.
+# Permiten cambiar de modelo sin tocar la config de roles.
+aliases:
+  fast: qwen-coder-7b
+  smart: gemini-pro
+  balanced: gemini-flash
+  private: qwen-coder-14b

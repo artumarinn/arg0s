@@ -1,0 +1,291 @@
+version: 1
+
+# ─────────────────────────────────────────────────────────────
+# GENERAL
+# ─────────────────────────────────────────────────────────────
+general:
+  default_strategy: router        # direct | router | fusion | judgment
+  theme: arg0s-dark
+  log_level: info                 # debug | info | warn | error
+  telemetry: true                 # eventos locales a SQLite (nunca sale de la máquina)
+  editor: nvim
+
+daemon:
+  socket: ~/.arg0s/daemon.sock
+  autostart: true                 # el cliente levanta el daemon si no corre
+  idle_shutdown: 30m              # 0 = nunca
+
+# ─────────────────────────────────────────────────────────────
+# PROVIDERS — endpoints de inferencia
+# ─────────────────────────────────────────────────────────────
+# Cada provider define CÓMO se accede. Los modelos van en models.yaml.
+providers:
+
+  gemini:
+    enabled: true
+    type: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    api_key_env: GEMINI_API_KEY   # se lee de ~/.arg0s/.env o del entorno
+    timeout: 120s
+    max_retries: 3
+    retry_backoff: exponential    # exponential | linear | none
+    rate_limit:
+      requests_per_minute: 60
+      concurrent: 4
+
+  ollama:
+    enabled: true
+    type: ollama
+    base_url: http://localhost:11434
+    api_key_env: ""               # local, sin key
+    timeout: 300s                 # los locales son lentos
+    max_retries: 1
+    rate_limit:
+      concurrent: 1               # una sola inferencia local a la vez
+    options:
+      keep_alive: 10m
+      num_ctx: 32768
+
+  openrouter:
+    enabled: false                # activar cuando haya key
+    type: openai_compatible
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    timeout: 180s
+    max_retries: 2
+    headers:
+      HTTP-Referer: https://localhost/arg0s
+      X-Title: Arg0s
+    rate_limit:
+      requests_per_minute: 30
+      concurrent: 3
+
+  # Plantilla para cualquier endpoint OpenAI-compatible
+  # (vLLM, LM Studio, llama.cpp server, Groq, Together, etc.)
+  custom_openai:
+    enabled: false
+    type: openai_compatible
+    base_url: http://localhost:8000/v1
+    api_key_env: CUSTOM_API_KEY
+    timeout: 120s
+
+# ─────────────────────────────────────────────────────────────
+# RUNTIMES — agentes externos (FASE 6, dejar declarado pero disabled)
+# ─────────────────────────────────────────────────────────────
+runtimes:
+
+  claude_code:
+    enabled: false
+    type: claude_code
+    binary: claude
+    args: ["-p"]                  # modo print / no interactivo
+    working_dir: "."
+    timeout: 600s
+    env_passthrough: [PATH, HOME, ANTHROPIC_API_KEY]
+    # Claude Pro NO da API key. Este runtime usa la sesión del CLI, no la API.
+
+  codex:
+    enabled: false
+    type: codex
+    binary: codex
+    timeout: 600s
+
+  gemini_cli:
+    enabled: false
+    type: gemini_cli
+    binary: gemini
+    timeout: 600s
+
+# ─────────────────────────────────────────────────────────────
+# ROLES — qué modelo usa cada función del sistema
+# ─────────────────────────────────────────────────────────────
+# Esta es la sección que más vas a tocar. Cada rol apunta a un
+# model_id definido en models.yaml.
+roles:
+
+  classifier:                     # clasifica el TaskProfile (router)
+    model: qwen-coder-7b
+    fallback: gemini-flash
+    temperature: 0.0
+    max_tokens: 512
+
+  generator:                      # respuesta principal por defecto
+    model: gemini-flash
+    fallback: qwen-coder-14b
+    temperature: 0.7
+
+  synthesizer:                    # fusiona/elige entre N respuestas
+    model: gemini-pro
+    fallback: gemini-flash
+    temperature: 0.3
+
+  judge_a:
+    model: gemini-flash
+    temperature: 0.0
+    max_tokens: 4096
+    perspective: correctness      # correctness | security | architecture | performance
+
+  judge_b:
+    model: qwen-coder-14b
+    temperature: 0.0
+    max_tokens: 4096
+    perspective: security
+
+  judge_c:                        # opcional, tercer juez para desempate
+    enabled: false
+    model: gemini-pro
+    perspective: architecture
+
+  fix_agent:                      # aplica correcciones acotadas
+    model: gemini-pro
+    fallback: gemini-flash
+    temperature: 0.2
+
+  summarizer:                     # comprime contexto e historial
+    model: qwen-coder-7b
+    temperature: 0.0
+
+# ─────────────────────────────────────────────────────────────
+# ROUTER
+# ─────────────────────────────────────────────────────────────
+router:
+  mode: heuristic                 # heuristic | classifier | hybrid | learned
+  classifier_threshold: 0.6       # bajo esto, escalar de tier
+
+  # Mapeo tier → modelo. El router elige tier, esto resuelve el modelo.
+  tiers:
+    simple:
+      models: [qwen-coder-7b]
+      max_cost_usd: 0.0
+    medium:
+      models: [gemini-flash, qwen-coder-14b]
+      max_cost_usd: 0.01
+    complex:
+      models: [gemini-pro]
+      max_cost_usd: 0.10
+
+  # Overrides por tipo de tarea
+  overrides:
+    - when: { privacy: secret }
+      force_tier: simple
+      force_local: true
+    - when: { type: architecture }
+      force_tier: complex
+    - when: { type: review, complexity: high }
+      force_strategy: judgment
+
+# ─────────────────────────────────────────────────────────────
+# FUSION
+# ─────────────────────────────────────────────────────────────
+fusion:
+  enabled: true
+  adaptive: true                  # solo escala si hay desacuerdo real
+  models: [gemini-flash, qwen-coder-14b]
+  max_models: 3
+  parallel: true
+
+  divergence:
+    method: hybrid                # lexical | semantic | judge | hybrid
+    threshold: 0.15               # sobre esto → sintetizar; bajo esto → devolver la primera
+    escalate_threshold: 0.45      # sobre esto → escalar a Judgment Day
+
+  synthesis:
+    mode: select_best             # select_best | merge | critique_and_merge
+    # select_best evita el "efecto promedio" de código plano/defensivo
+
+# ─────────────────────────────────────────────────────────────
+# JUDGMENT DAY
+# ─────────────────────────────────────────────────────────────
+judgment:
+  enabled: true
+  mode: fail_fast                 # fail_fast | parallel
+  # fail_fast: corre judge_a primero; judge_b solo si A encuentra
+  # algo CRITICAL/SEVERE o si la tarea es de alta complejidad.
+  # Ahorra ~50% de llamadas en cambios triviales.
+
+  max_rounds: 2
+  blind: true                     # los jueces no ven el output del otro
+  require_evidence: true          # todo finding necesita file:line o se descarta
+
+  severities: [CRITICAL, SEVERE, MODERATE, MINOR, INFO]
+  fix_severities: [CRITICAL, SEVERE]   # solo se corrige esto
+  fix_requires_confirmation: [CRITICAL, SEVERE]
+
+  consensus:
+    confirmed_by: 2               # nº de jueces que deben coincidir
+    on_contradiction: escalate    # escalate | trust_higher_severity | ask_human
+
+  verdicts: [APPROVED, APPROVED_WITH_WARNINGS, ESCALATED, FAILED]
+
+# ─────────────────────────────────────────────────────────────
+# CONTEXT COMPILER
+# ─────────────────────────────────────────────────────────────
+context:
+  default_budget_tokens: 16000
+  reserve_output_tokens: 4000
+  budget_split:                   # proporción del budget por fuente
+    prompt: 0.10
+    code: 0.45
+    graph: 0.10
+    memory: 0.20
+    skills: 0.10
+    artifacts: 0.05
+  compress_when_over: true
+  compression_model: summarizer
+
+# ─────────────────────────────────────────────────────────────
+# MEMORY
+# ─────────────────────────────────────────────────────────────
+memory:
+  enabled: true
+  backend: sqlite                 # sqlite | engram
+  scope: project                  # project | global | session
+  max_fragments_per_query: 8
+  min_relevance: 0.35
+  decay:
+    enabled: true
+    revalidate_after: 30d         # marcar como "stale", no borrar
+  categories: [DECISION, FACT, BUG, PREFERENCE, ARCHITECTURE, TODO, LESSON]
+
+# ─────────────────────────────────────────────────────────────
+# CODE GRAPH
+# ─────────────────────────────────────────────────────────────
+codegraph:
+  enabled: true
+  backend: lsp                    # lsp | scip | none
+  index_on_open: true
+  watch: false                    # reindex incremental en cambios
+  max_file_size_kb: 512
+  ignore: [vendor/, node_modules/, .git/, dist/, build/, "*.min.js"]
+  servers:
+    go: { command: gopls, args: [serve] }
+    python: { command: pyright-langserver, args: ["--stdio"] }
+    typescript: { command: typescript-language-server, args: ["--stdio"] }
+    rust: { command: rust-analyzer, args: [] }
+
+# ─────────────────────────────────────────────────────────────
+# COSTOS Y LÍMITES
+# ─────────────────────────────────────────────────────────────
+limits:
+  daily_cost_usd: 2.00
+  per_task_cost_usd: 0.25
+  per_task_max_calls: 8           # corta cadenas fusion+judgment desbocadas
+  warn_at_percent: 80
+  on_exceed: block                # block | warn | downgrade_to_local
+
+# ─────────────────────────────────────────────────────────────
+# PRESETS — perfiles rápidos de costo/calidad
+# ─────────────────────────────────────────────────────────────
+presets:
+  cheap:
+    default_strategy: direct
+    roles: { generator: qwen-coder-7b, judge_a: qwen-coder-7b, judge_b: qwen-coder-14b }
+    limits: { per_task_cost_usd: 0.0 }
+  balanced:
+    default_strategy: router
+  quality:
+    default_strategy: fusion
+    roles: { generator: gemini-pro, synthesizer: gemini-pro }
+    judgment: { enabled: true, mode: parallel }
+
+active_preset: balanced
