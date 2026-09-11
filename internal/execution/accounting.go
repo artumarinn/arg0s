@@ -23,6 +23,29 @@ func estimateFailureUsage(req core.Request) core.Usage {
 	return core.Usage{InputTokens: estimateTokens(req.Prompt), Estimated: true}
 }
 
+// accountStreamUsage cierra el accounting de un stream que terminó bien.
+// content es todo lo acumulado de los Delta recibidos.
+func accountStreamUsage(finalUsage *core.Usage, model core.Model, req core.Request, content string) core.Usage {
+	var u core.Usage
+	if finalUsage != nil {
+		u = *finalUsage
+	} else {
+		u = core.Usage{InputTokens: estimateTokens(req.Prompt), OutputTokens: estimateTokens(content), Estimated: true}
+	}
+	u.CostUSD = tokenCost(u.InputTokens, model.CostInputPer1M) + tokenCost(u.OutputTokens, model.CostOutputPer1M)
+	return u
+}
+
+// partialStreamUsage contabiliza lo que se alcanzó a generar cuando un
+// stream muere a mitad de camino (error del provider o cancelación) —
+// esos tokens ya se generaron, se cobran igual.
+func partialStreamUsage(req core.Request, content string, finalUsage *core.Usage) core.Usage {
+	if finalUsage != nil {
+		return *finalUsage
+	}
+	return core.Usage{InputTokens: estimateTokens(req.Prompt), OutputTokens: estimateTokens(content), Estimated: true}
+}
+
 func estimateTokens(s string) int {
 	if s == "" {
 		return 0

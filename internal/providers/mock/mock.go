@@ -32,6 +32,11 @@ type Config struct {
 
 	Usage  core.Usage   // usage a reportar en éxito; zero value = "el provider no reportó tokens"
 	Models []core.Model // catálogo que devuelve Models(); default: un modelo sintético
+
+	// ChunkDelay pacea el envío de cada pieza en Stream (no Complete).
+	// Sin esto, un Stream de contenido corto termina en microsegundos y
+	// no deja ventana real para probar cancelación a mitad de camino.
+	ChunkDelay time.Duration
 }
 
 type Provider struct {
@@ -129,6 +134,13 @@ func (p *Provider) Stream(ctx context.Context, req core.Request) (<-chan core.Ch
 			step = 1
 		}
 		for i := 0; i < len(content); i += step {
+			if p.cfg.ChunkDelay > 0 {
+				select {
+				case <-time.After(p.cfg.ChunkDelay):
+				case <-ctx.Done():
+					return
+				}
+			}
 			end := min(i+step, len(content))
 			select {
 			case ch <- core.Chunk{Delta: content[i:end]}:
@@ -136,9 +148,16 @@ func (p *Provider) Stream(ctx context.Context, req core.Request) (<-chan core.Ch
 				return
 			}
 		}
-		usage := resp.Usage
+		final := core.Chunk{Done: true}
+		if resp.Usage != (core.Usage{}) {
+			// zero value == "el provider no reportó tokens", igual que
+			// en Complete — si no, el chunk final siempre "reportaría"
+			// usage en cero y el executor nunca estimaría en streaming.
+			usage := resp.Usage
+			final.Usage = &usage
+		}
 		select {
-		case ch <- core.Chunk{Done: true, Usage: &usage}:
+		case ch <- final:
 		case <-ctx.Done():
 		}
 	}()

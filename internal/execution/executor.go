@@ -52,24 +52,36 @@ func New(registry *providers.Registry, models ModelCatalog, policies map[string]
 }
 
 // Execute corre req contra req.ModelID con retry/timeout/rate-limit, y
-// si falla y fallbackModelID no está vacío, lo intenta UNA sola vez
-// (sección 7). Devuelve siempre un ModelRun, incluso en error — el
+// si falla y req.Fallback no está vacío, lo intenta UNA sola vez (sin
+// retry propio — sección 7, y evita que un provider caído multiplique
+// la espera). Devuelve siempre un ModelRun, incluso en error — el
 // accounting se emite aunque la llamada falle.
-func (e *Executor) Execute(ctx context.Context, req core.Request, role core.Role, fallbackModelID string) (core.Response, core.ModelRun, error) {
-	e.emit(ctx, telemetry.EventModelStarted, req.ModelID, role, nil)
+//
+// req.MaxCalls (limits.per_task_max_calls) acota primario+retries+
+// fallback en conjunto: si el primario ya gastó todo el presupuesto,
+// el fallback ni se intenta.
+func (e *Executor) Execute(ctx context.Context, req core.Request) (core.Response, core.ModelRun, error) {
+	e.emit(ctx, telemetry.EventModelStarted, req.ModelID, req.Role, nil)
 	start := time.Now()
 
-	resp, attempts, model, err := e.tryModel(ctx, req, req.ModelID, true)
+	policy := e.policies[e.providerOf(req.ModelID)]
+	primaryCap := policy.MaxRetries + 1
+	if req.MaxCalls > 0 && req.MaxCalls < primaryCap {
+		primaryCap = req.MaxCalls
+	}
+
+	resp, attempts, model, err := e.tryModel(ctx, req, req.ModelID, primaryCap)
 	finalModelID := req.ModelID
 	fellBackFrom := ""
 
-	if err != nil && fallbackModelID != "" && ctx.Err() == nil {
-		fbResp, fbAttempts, fbModel, fbErr := e.tryModel(ctx, req, fallbackModelID, false)
+	fallbackAllowed := req.MaxCalls <= 0 || attempts < req.MaxCalls
+	if err != nil && req.Fallback != "" && ctx.Err() == nil && fallbackAllowed {
+		fbResp, fbAttempts, fbModel, fbErr := e.tryModel(ctx, req, req.Fallback, 1)
 		attempts += fbAttempts
 		if fbErr == nil {
-			resp, model, finalModelID, fellBackFrom = fbResp, fbModel, fallbackModelID, req.ModelID
+			resp, model, finalModelID, fellBackFrom = fbResp, fbModel, req.Fallback, req.ModelID
 			err = nil
-			e.emit(ctx, telemetry.EventModelFellBack, fallbackModelID, role, nil)
+			e.emit(ctx, telemetry.EventModelFellBack, req.Fallback, req.Role, nil)
 		} else {
 			err = fbErr
 		}
@@ -80,7 +92,7 @@ func (e *Executor) Execute(ctx context.Context, req core.Request, role core.Role
 
 	run := core.ModelRun{
 		ModelID:      finalModelID,
-		Role:         role,
+		Role:         req.Role,
 		Latency:      latency,
 		Attempts:     attempts,
 		Err:          err,
@@ -89,19 +101,19 @@ func (e *Executor) Execute(ctx context.Context, req core.Request, role core.Role
 
 	if err != nil {
 		run.Usage = estimateFailureUsage(req)
-		e.emit(ctx, telemetry.EventModelFailed, finalModelID, role, err)
+		e.emit(ctx, telemetry.EventModelFailed, finalModelID, req.Role, err)
 		return core.Response{}, run, err
 	}
 
 	run.Usage = accountUsage(resp.Usage, model, req, resp)
-	e.emit(ctx, telemetry.EventModelCompleted, finalModelID, role, nil)
+	e.emit(ctx, telemetry.EventModelCompleted, finalModelID, req.Role, nil)
 	return resp, run, nil
 }
 
 // tryModel resuelve modelo+provider, adquiere el semáforo del provider
-// y ejecuta — con retry loop si allowRetry, o una sola llamada si no
-// (así se usa para el intento único de fallback).
-func (e *Executor) tryModel(ctx context.Context, req core.Request, modelID string, allowRetry bool) (core.Response, int, core.Model, error) {
+// y ejecuta con retry hasta maxAttempts (maxAttempts=1 => una sola
+// llamada, sin retry — así se usa para el intento de fallback).
+func (e *Executor) tryModel(ctx context.Context, req core.Request, modelID string, maxAttempts int) (core.Response, int, core.Model, error) {
 	model, ok := e.models.Resolve(modelID)
 	if !ok {
 		return core.Response{}, 0, core.Model{}, fmt.Errorf("execute: model %q no encontrado en el catálogo", modelID)
@@ -120,15 +132,15 @@ func (e *Executor) tryModel(ctx context.Context, req core.Request, modelID strin
 	policy := e.policies[model.Provider]
 	req.ModelID = modelID
 
-	if !allowRetry {
-		callCtx, cancel := withTimeout(ctx, policy.Timeout)
-		resp, err := provider.Complete(callCtx, req)
-		cancel()
-		return resp, 1, model, err
-	}
-
-	resp, attempts, err := e.executeWithRetry(ctx, provider, req, policy)
+	resp, attempts, err := e.executeWithRetry(ctx, provider, req, policy, maxAttempts)
 	return resp, attempts, model, err
+}
+
+func (e *Executor) providerOf(modelID string) string {
+	if m, ok := e.models.Resolve(modelID); ok {
+		return m.Provider
+	}
+	return ""
 }
 
 func (e *Executor) acquire(ctx context.Context, provider string) (release func(), err error) {
