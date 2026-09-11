@@ -21,6 +21,10 @@ type ModelRun struct {
 	Latency  time.Duration
 	Attempts int
 	Err      error
+	// FellBackFrom es el ModelID original si esta corrida terminó
+	// usando el fallback del rol (sección 7: "se intenta UNA sola vez
+	// y lo registra como tal en el ModelRun"). Vacío si no hubo fallback.
+	FellBackFrom string
 }
 
 // Result es la salida de ejecutar una Task bajo una Strategy.
