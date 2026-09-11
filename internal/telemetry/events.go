@@ -1,7 +1,4 @@
 // Package telemetry implementa el event bus de Arg0s (sección 16.1).
-// En Fase 0 solo existen los tipos de evento y la infraestructura de
-// bus + persistencia — nada todavía emite eventos de ejecución real
-// (eso llega con execution/orchestrator en fases posteriores).
 package telemetry
 
 import "time"
@@ -15,6 +12,13 @@ const (
 	EventTaskCompleted  EventType = "TaskCompleted"
 	EventTaskFailed     EventType = "TaskFailed"
 	EventTaskCancelled  EventType = "TaskCancelled"
+
+	// Emitidos por internal/execution (Fase 1) — ver sección 16.1.
+	EventModelStarted   EventType = "ModelStarted"
+	EventModelCompleted EventType = "ModelCompleted"
+	EventModelFailed    EventType = "ModelFailed"
+	EventModelRetried   EventType = "ModelRetried"
+	EventModelFellBack  EventType = "ModelFellBack"
 )
 
 // Event es la unidad de la observabilidad de Arg0s (sección 16.1).
