@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,10 +36,11 @@ func newDoctorCmd() *cobra.Command {
 
 var errDoctorFailed = fmt.Errorf("doctor encontró checks fallidos")
 
-// runDoctorChecks agrega los checks de la sección 6.7 que aplican en
-// Fase 0. Los checks 6, 7, 9 y 10 (conectividad real, ollama corriendo,
-// binarios de runtime, servidores LSP) requieren providers/runtimes/LSP
-// que no existen todavía — se reportan como skip acá, no en internal/config.
+// runDoctorChecks agrega los checks de la sección 6.7. Desde Fase 1,
+// los checks 6 y 7 (conectividad real, modelos de Ollama cargados) los
+// resuelve providers.Registry.Health() de verdad -- ya no son skip.
+// Los checks 9 y 10 (binarios de runtime, servidores LSP) siguen sin
+// implementación (Fase 6 y Fase 3 respectivamente).
 func runDoctorChecks() (checks []core.Check, hasFail bool, err error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -48,7 +52,8 @@ func runDoctorChecks() (checks []core.Check, hasFail bool, err error) {
 	}
 
 	checks = append(checks, config.Validate(cfg, models)...)
-	checks = append(checks, connectivitySkipChecks(cfg)...)
+	checks = append(checks, buildRegistry(cfg).Health(context.Background(), 10*time.Second)...)
+	checks = append(checks, notImplementedSkipChecks(cfg)...)
 
 	home, err := config.Home()
 	if err != nil {
@@ -84,26 +89,18 @@ func storageCheck(path string) []core.Check {
 	return db.Health("arg0s.db")
 }
 
-func connectivitySkipChecks(cfg *config.Config) []core.Check {
+// notImplementedSkipChecks cubre los checks 9 y 10 de la sección 6.7 —
+// todavía sin implementación real (Fase 6 y Fase 3 respectivamente).
+func notImplementedSkipChecks(cfg *config.Config) []core.Check {
 	var checks []core.Check
-	for _, name := range sortedProviderNames(cfg) {
-		p := cfg.Providers[name]
-		if !p.Enabled {
-			continue
-		}
-		checks = append(checks, core.Check{Group: "Providers", Name: name + " connectivity", Status: core.CheckSkip, Detail: "not implemented (phase 0)"})
-	}
-	if ollama, ok := cfg.Providers["ollama"]; ok && ollama.Enabled {
-		checks = append(checks, core.Check{Group: "Providers", Name: "ollama models loaded", Status: core.CheckSkip, Detail: "not implemented (phase 0)"})
-	}
 	for _, name := range sortedRuntimeNames(cfg) {
 		r := cfg.Runtimes[name]
 		if !r.Enabled {
 			continue
 		}
-		checks = append(checks, core.Check{Group: "Runtimes", Name: name + " binary", Status: core.CheckSkip, Detail: "not implemented (phase 0)"})
+		checks = append(checks, core.Check{Group: "Runtimes", Name: name + " binary", Status: core.CheckSkip, Detail: "not implemented yet (Fase 6)"})
 	}
-	checks = append(checks, core.Check{Group: "CodeGraph", Name: "LSP servers", Status: core.CheckSkip, Detail: "not implemented (phase 0)"})
+	checks = append(checks, core.Check{Group: "CodeGraph", Name: "LSP servers", Status: core.CheckSkip, Detail: "not implemented yet (Fase 3)"})
 	return checks
 }
 
@@ -112,6 +109,7 @@ func sortedProviderNames(cfg *config.Config) []string {
 	for n := range cfg.Providers {
 		names = append(names, n)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -120,6 +118,7 @@ func sortedRuntimeNames(cfg *config.Config) []string {
 	for n := range cfg.Runtimes {
 		names = append(names, n)
 	}
+	sort.Strings(names)
 	return names
 }
 

@@ -13,6 +13,11 @@ import (
 // modelos locales cargados, en el caso de Ollama). Solo-lectura: nunca
 // escribe estado de Arg0s (regla dura #11); la llamada de red en sí es
 // justamente lo que el check pide verificar.
+//
+// Una falla de conectividad es ⊘, no ✗: "todavía no levantaste ollama"
+// o "todavía no configuraste este provider" es un pendiente esperado
+// después de `arg0s init`, igual que una API key sin llenar — no un
+// error de configuración. Mismo criterio que config.checkProviders.
 func (r *Registry) Health(ctx context.Context, timeout time.Duration) []core.Check {
 	var checks []core.Check
 	for _, name := range r.Names() {
@@ -29,8 +34,8 @@ func (r *Registry) Health(ctx context.Context, timeout time.Duration) []core.Che
 
 		if err != nil {
 			checks = append(checks, core.Check{
-				Group: "Providers", Name: name + " connectivity", Status: core.CheckFail,
-				Detail: core.RedactSecrets(err.Error()),
+				Group: "Providers", Name: name + " connectivity", Status: core.CheckSkip,
+				Detail: "not reachable: " + core.RedactSecrets(err.Error()),
 			})
 			continue
 		}

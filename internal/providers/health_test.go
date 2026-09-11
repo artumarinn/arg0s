@@ -24,7 +24,7 @@ func (f fakeModelsErr) Models(ctx context.Context) ([]core.Model, error) {
 	return nil, context.DeadlineExceeded
 }
 
-func TestHealth_ReportsPassAndFail(t *testing.T) {
+func TestHealth_ReportsPassAndSkipOnError(t *testing.T) {
 	reg := providers.NewRegistry()
 	reg.Register(mock.New(mock.Config{Name: "ollama", Models: []core.Model{{ID: "m1"}, {ID: "m2"}}}))
 	reg.Register(fakeModelsErr{Provider: mock.New(mock.Config{}), name: "gemini"})
@@ -40,5 +40,5 @@ func TestHealth_ReportsPassAndFail(t *testing.T) {
 	require.Equal(t, core.CheckPass, byName["ollama connectivity"].Status)
 	require.Contains(t, byName["ollama connectivity"].Detail, "2 models loaded")
 
-	require.Equal(t, core.CheckFail, byName["gemini connectivity"].Status)
+	require.Equal(t, core.CheckSkip, byName["gemini connectivity"].Status)
 }
