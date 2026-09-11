@@ -130,7 +130,13 @@ func (e *Executor) tryModel(ctx context.Context, req core.Request, modelID strin
 	defer release()
 
 	policy := e.policies[model.Provider]
-	req.ModelID = modelID
+	// El provider recibe SU id real (provider_model_id), no nuestro
+	// alias -- "qwen2.5-coder:7b", no "qwen-coder-7b". El alias se
+	// preserva en ModelRun/Response vía finalModelID en Execute.
+	req.ModelID = model.ProviderModelID
+	if req.ModelID == "" {
+		req.ModelID = modelID
+	}
 
 	resp, attempts, err := e.executeWithRetry(ctx, provider, req, policy, maxAttempts)
 	return resp, attempts, model, err
