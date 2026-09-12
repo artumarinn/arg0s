@@ -31,10 +31,28 @@ type TierConfig struct {
 	MaxCostUSD float64  `yaml:"max_cost_usd"`
 }
 
+// OverrideWhen son las condiciones de un override -- todos los campos
+// no vacíos deben matchear el TaskProfile para que el override aplique
+// (sección 8).
+type OverrideWhen struct {
+	Type       string `yaml:"type,omitempty"`
+	Complexity string `yaml:"complexity,omitempty"`
+	Privacy    string `yaml:"privacy,omitempty"`
+}
+
+type OverrideConfig struct {
+	When          OverrideWhen `yaml:"when"`
+	ForceTier     string       `yaml:"force_tier,omitempty"`
+	ForceLocal    bool         `yaml:"force_local,omitempty"`
+	ForceStrategy string       `yaml:"force_strategy,omitempty"`
+	ForceModel    string       `yaml:"force_model,omitempty"`
+}
+
 type RouterConfig struct {
 	Mode                string                `yaml:"mode"`
 	ClassifierThreshold float64               `yaml:"classifier_threshold"`
 	Tiers               map[string]TierConfig `yaml:"tiers"`
+	Overrides           []OverrideConfig      `yaml:"overrides,omitempty"`
 }
 
 type LimitsConfig struct {

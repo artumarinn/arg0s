@@ -4,8 +4,8 @@ Fuente de verdad completa: [docs/ARG0S.md](docs/ARG0S.md). Este archivo
 es un resumen operativo, no un reemplazo — ante cualquier duda, gana
 docs/ARG0S.md.
 
-**Fase actual: FASE 1** (ejecución de modelos). Fase 0 (fundación, sin
-IA) cerrada y commiteada.
+**Fase actual: FASE 3** (motor de contexto). Fase 0 (fundación), Fase 1
+(ejecución de modelos) y Fase 2 (router) cerradas y commiteadas.
 
 ## Reglas duras
 
@@ -39,3 +39,25 @@ que estamos".
     storage, y eso rompía la detección de conflicto de `arg0s init` en
     la corrida siguiente (un `arg0s.db` huérfano bloqueaba el `init`
     posterior sin `--force`). Ver Engram `arg0s/preference/read-only-diagnostics`.
+
+## Estado conocido del Router (Fase 2, cerrada)
+
+- `router.mode` default es `heuristic`. Los modos `classifier` y
+  `hybrid` están implementados pero **solo probados contra el provider
+  mock** (`internal/router/classifier_test.go`) — nunca contra un
+  modelo real. No asumir que están validados en producción; no
+  cambiarlos a default sin correrlos antes contra un modelo real. Ver
+  Engram `arg0s/discovery/classifier-mode-untested-e2e`.
+- Orden real: perfilar → overrides → **filtrar candidatos por
+  presupuesto → recién ahí elegir modelo** (`Router.selectAffordable`,
+  internal/router/router.go). Si el tier "ideal" no entra en
+  `per_task_cost_usd`/`daily_cost_usd`, degrada al tier más capaz que
+  SÍ entre, según `limits.on_exceed` (`block` busca el más barato que
+  alcance y sirve; `warn` ejecuta el ideal igual; `downgrade_to_local`
+  fuerza local en esa búsqueda). Bloquea con `BudgetExceededError` solo
+  si ningún tier entra.
+- El chequeo+reserva de presupuesto diario es atómico bajo un mutex por
+  `*Router` (`checkAndReserveBudget`, internal/router/policy.go) — sirve
+  para no pisarse entre goroutines de UN MISMO proceso. **No** protege
+  contra dos procesos `arg0s run` separados corriendo a la vez; eso
+  necesita el daemon (Fase 4).

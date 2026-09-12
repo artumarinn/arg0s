@@ -29,5 +29,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newProvidersCmd())
 	root.AddCommand(newModelsCmd())
 	root.AddCommand(newCostCmd())
+	root.AddCommand(newRouteCmd())
 	return root
 }

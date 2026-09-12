@@ -34,6 +34,8 @@ type Run struct {
 	SessionID    string
 	Prompt       string
 	Strategy     string
+	Profile      string // JSON de core.TaskProfile, vacío si no pasó por el router
+	Routing      string // JSON de router.RoutingDecision, vacío si no pasó por el router
 	Status       string // completed | failed | cancelled
 	InputTokens  int
 	OutputTokens int
@@ -47,14 +49,20 @@ type Run struct {
 // vivo que mostrar (eso es la TUI de Fase 4) — se inserta una sola vez,
 // con el resultado final.
 func (db *DB) InsertRun(ctx context.Context, r Run) error {
-	var errVal any
+	var errVal, profile, routing any
 	if r.Error != "" {
 		errVal = r.Error
 	}
+	if r.Profile != "" {
+		profile = r.Profile
+	}
+	if r.Routing != "" {
+		routing = r.Routing
+	}
 	_, err := db.ExecContext(ctx, `
-		INSERT INTO runs (id, session_id, prompt, strategy, status, input_tokens, output_tokens, cost_usd, started_at, ended_at, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.SessionID, r.Prompt, r.Strategy, r.Status,
+		INSERT INTO runs (id, session_id, prompt, strategy, profile, routing, status, input_tokens, output_tokens, cost_usd, started_at, ended_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.SessionID, r.Prompt, r.Strategy, profile, routing, r.Status,
 		r.InputTokens, r.OutputTokens, r.CostUSD,
 		r.StartedAt.Unix(), r.EndedAt.Unix(), errVal,
 	)
@@ -108,12 +116,12 @@ var ErrRunNotFound = errors.New("run not found")
 // GetRun trae un run y sus model_runs asociados — para `arg0s run show`.
 func (db *DB) GetRun(ctx context.Context, id string) (*Run, []ModelRunRow, error) {
 	row := db.QueryRowContext(ctx, `
-		SELECT id, session_id, prompt, strategy, status, input_tokens, output_tokens, cost_usd, started_at, ended_at, COALESCE(error, '')
+		SELECT id, session_id, prompt, strategy, COALESCE(profile, ''), COALESCE(routing, ''), status, input_tokens, output_tokens, cost_usd, started_at, ended_at, COALESCE(error, '')
 		FROM runs WHERE id = ?`, id)
 
 	var r Run
 	var started, ended int64
-	if err := row.Scan(&r.ID, &r.SessionID, &r.Prompt, &r.Strategy, &r.Status,
+	if err := row.Scan(&r.ID, &r.SessionID, &r.Prompt, &r.Strategy, &r.Profile, &r.Routing, &r.Status,
 		&r.InputTokens, &r.OutputTokens, &r.CostUSD, &started, &ended, &r.Error); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, ErrRunNotFound
@@ -152,6 +160,14 @@ type CostSummary struct {
 	InputTokens  int
 	OutputTokens int
 	Runs         int
+}
+
+// CostSinceUSD satisface router.CostSource -- desacopla al router de
+// este paquete concreto de persistencia (mismo patrón que
+// execution.ModelCatalog).
+func (db *DB) CostSinceUSD(ctx context.Context, since time.Time) (float64, error) {
+	s, err := db.CostSummary(ctx, since)
+	return s.CostUSD, err
 }
 
 func (db *DB) CostSummary(ctx context.Context, since time.Time) (CostSummary, error) {

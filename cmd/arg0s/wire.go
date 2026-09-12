@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/artumarinn/arg0s/internal/config"
-	"github.com/artumarinn/arg0s/internal/core"
 	"github.com/artumarinn/arg0s/internal/execution"
 	"github.com/artumarinn/arg0s/internal/providers"
 	"github.com/artumarinn/arg0s/internal/providers/gemini"
 	"github.com/artumarinn/arg0s/internal/providers/ollama"
 	openaicompatible "github.com/artumarinn/arg0s/internal/providers/openai_compatible"
+	"github.com/artumarinn/arg0s/internal/router"
 	"github.com/artumarinn/arg0s/internal/telemetry"
 )
 
@@ -65,32 +65,14 @@ func parseDuration(s string, def time.Duration) time.Duration {
 	return d
 }
 
-// modelCatalog adapta *config.ModelsFile a execution.ModelCatalog.
-type modelCatalog struct {
-	mf *config.ModelsFile
-}
-
-func (c modelCatalog) Resolve(id string) (core.Model, bool) {
-	real := c.mf.ResolveModel(id)
-	mc, ok := c.mf.Models[real]
-	if !ok {
-		return core.Model{}, false
-	}
-	return core.Model{
-		ID:              real,
-		Provider:        mc.Provider,
-		ProviderModelID: mc.ProviderModelID,
-		ContextWindow:   mc.ContextWindow,
-		MaxOutputTokens: mc.MaxOutputTokens,
-		CostInputPer1M:  mc.Cost.InputPer1MUSD,
-		CostOutputPer1M: mc.Cost.OutputPer1MUSD,
-		Capabilities:    mc.Capabilities,
-		Strengths:       mc.Strengths,
-		Tier:            mc.Tier,
-		Local:           mc.Local,
-	}, true
-}
-
 func buildExecutor(cfg *config.Config, models *config.ModelsFile, bus *telemetry.Bus) *execution.Executor {
-	return execution.New(buildRegistry(cfg), modelCatalog{mf: models}, buildPolicies(cfg), bus)
+	return execution.New(buildRegistry(cfg), models, buildPolicies(cfg), bus)
+}
+
+// buildRouter arma el Router de Fase 2. classifierExec es el mismo
+// Executor de la corrida -- el router nunca habla con un provider
+// directo (sección 8/P4) -- solo se usa si router.mode es classifier
+// o hybrid.
+func buildRouter(cfg *config.Config, models *config.ModelsFile, costs router.CostSource, exec *execution.Executor) *router.Router {
+	return router.New(cfg.Router, cfg.Limits, models, costs, exec, cfg.Roles.Classifier)
 }

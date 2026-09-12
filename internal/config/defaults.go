@@ -95,6 +95,11 @@ func DefaultConfig() *Config {
 				"medium":  {Models: []string{"gemini-flash", "qwen-coder-14b"}, MaxCostUSD: 0.01},
 				"complex": {Models: []string{"gemini-pro"}, MaxCostUSD: 0.10},
 			},
+			Overrides: []OverrideConfig{
+				{When: OverrideWhen{Privacy: "secret"}, ForceTier: "simple", ForceLocal: true},
+				{When: OverrideWhen{Type: "architecture"}, ForceTier: "complex"},
+				{When: OverrideWhen{Type: "review", Complexity: "high"}, ForceStrategy: "judgment"},
+			},
 		},
 		Limits: LimitsConfig{
 			DailyCostUSD:    2.00,

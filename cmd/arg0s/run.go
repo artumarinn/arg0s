@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,14 +30,11 @@ func newRunCmd() *cobra.Command {
 		Short: "Ejecuta un prompt contra un modelo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if modelFlag == "" {
-				return fmt.Errorf("--model es obligatorio en Fase 1 -- el router que lo elige solo llega en Fase 2")
-			}
 			return runTask(cmd, args[0], modelFlag, stream, jsonOut)
 		},
 		SilenceUsage: true,
 	}
-	cmd.Flags().StringVar(&modelFlag, "model", "", "modelo a usar (obligatorio)")
+	cmd.Flags().StringVar(&modelFlag, "model", "", "modelo a usar (vacío = el router lo elige)")
 	cmd.Flags().BoolVar(&stream, "stream", false, "muestra la respuesta en streaming")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "salida estructurada en JSON")
 	cmd.AddCommand(newRunShowCmd())
@@ -85,6 +83,23 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	runID := storage.NewRunID()
+
+	var profileJSON, routingJSON string
+	if modelID == "" {
+		decision, err := buildRouter(cfg, models, db, exec).Decide(ctx, runID, prompt)
+		if err != nil {
+			return err
+		}
+		modelID = decision.SelectedModel
+		if b, err := json.Marshal(decision.Profile); err == nil {
+			profileJSON = string(b)
+		}
+		if b, err := json.Marshal(decision); err == nil {
+			routingJSON = string(b)
+		}
+	}
+
 	cwd, _ := os.Getwd()
 	sessionID := storage.NewSessionID()
 	if err := db.InsertSession(context.Background(), sessionID, cwd); err != nil {
@@ -92,10 +107,9 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 	}
 
 	fallback := cfg.Roles.Generator.Fallback
-	runID := storage.NewRunID()
 
 	if stream {
-		return runStreaming(cmd, ctx, db, cfg, models, runID, sessionID, prompt, modelID, fallback, jsonOut)
+		return runStreaming(cmd, ctx, db, cfg, models, runID, sessionID, prompt, modelID, fallback, profileJSON, routingJSON, jsonOut)
 	}
 
 	strat := strategies.NewDirect(exec, modelID, fallback)
@@ -112,6 +126,7 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 
 	persistRun(db, storage.Run{
 		ID: runID, SessionID: sessionID, Prompt: prompt, Strategy: string(result.Strategy),
+		Profile: profileJSON, Routing: routingJSON,
 		Status: status, InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens,
 		CostUSD: result.Usage.CostUSD, StartedAt: result.StartedAt, EndedAt: result.EndedAt,
 		Error: errString(runErr),
@@ -125,11 +140,17 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 		return runErr
 	}
 
+	if !jsonOut {
+		for _, mr := range result.ModelRuns {
+			printFallbackWarning(cmd.OutOrStdout(), mr)
+		}
+	}
+
 	return printResult(cmd, runID, result.Content, result.Usage, jsonOut)
 }
 
 func runStreaming(cmd *cobra.Command, ctx context.Context, db *storage.DB, cfg *config.Config, models *config.ModelsFile,
-	runID, sessionID, prompt, modelID, fallback string, jsonOut bool) error {
+	runID, sessionID, prompt, modelID, fallback, profileJSON, routingJSON string, jsonOut bool) error {
 
 	bus := telemetry.NewBus(db.DB)
 	exec := buildExecutor(cfg, models, bus)
@@ -154,6 +175,7 @@ func runStreaming(cmd *cobra.Command, ctx context.Context, db *storage.DB, cfg *
 	}
 	if !jsonOut {
 		fmt.Fprintln(out)
+		printFallbackWarning(out, *run) // seguro leer run acá: el canal ya cerró (ver comentario en Stream)
 	}
 
 	status := "completed"
@@ -166,6 +188,7 @@ func runStreaming(cmd *cobra.Command, ctx context.Context, db *storage.DB, cfg *
 
 	persistRun(db, storage.Run{
 		ID: runID, SessionID: sessionID, Prompt: prompt, Strategy: "direct",
+		Profile: profileJSON, Routing: routingJSON,
 		Status: status, InputTokens: run.Usage.InputTokens, OutputTokens: run.Usage.OutputTokens,
 		CostUSD: run.Usage.CostUSD, StartedAt: started, EndedAt: started.Add(run.Latency),
 		Error: errString(run.Err),
@@ -212,6 +235,17 @@ func persistRun(db *storage.DB, run storage.Run, modelRuns []core.ModelRun, mode
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no se pudo persistir el model_run: %v\n", err)
 		}
 	}
+}
+
+// printFallbackWarning avisa en salida normal (no solo en `run show`)
+// cuando un ModelRun terminó en un modelo distinto al pedido -- un
+// fallback silencioso es indistinguible de "todo funciona bien" para
+// quien nunca revisó `run show`.
+func printFallbackWarning(out io.Writer, mr core.ModelRun) {
+	if mr.FellBackFrom == "" {
+		return
+	}
+	fmt.Fprintf(out, "⚠ %s no disponible, usando fallback: %s\n", mr.FellBackFrom, mr.ModelID)
 }
 
 func printResult(cmd *cobra.Command, runID, content string, usage core.Usage, jsonOut bool) error {
