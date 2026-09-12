@@ -30,5 +30,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newModelsCmd())
 	root.AddCommand(newCostCmd())
 	root.AddCommand(newRouteCmd())
+	root.AddCommand(newMemoryCmd())
+	root.AddCommand(newGraphCmd())
 	return root
 }

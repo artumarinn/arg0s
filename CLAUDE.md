@@ -30,15 +30,30 @@ que estamos".
 9. `.env` y `*.db` nunca se commitean — en `.gitignore` desde el primer
    commit. (§21 DoD Fase 0)
 10. `internal/core` no importa ningún otro paquete interno. Nunca. (§22)
-11. Los comandos de diagnóstico y consulta son **solo-lectura**: `doctor`,
-    `providers list`, `models list`, `graph query`, `session show`,
-    `cost`. Ninguno crea, migra ni muta estado — si falta algo, lo
-    reportan y dicen qué comando lo crea. Solo `init`, `run` y los
-    mutadores explícitos escriben.
-    Origen: `doctor` creaba `arg0s.db` como side effect al chequear
+11. **Todo método que el CLI expone como consulta es solo-lectura** —
+    no una lista cerrada de comandos, sino un principio: si el usuario
+    lo invoca para LEER (un `list`, `search`, `query`, `show`, `get`,
+    o el método de un store que un comando de solo-lectura llama por
+    debajo), no puede crear `arg0s.db`, no puede migrar, y no puede
+    mutar una fila como side effect de haber leído. Ejemplos ya
+    cubiertos: `doctor`, `providers list`, `models list`, `graph
+    query`/`graph callers`, `session show`, `cost`, `memory
+    list`/`memory search`. Si falta algo (la db no existe, no hay
+    datos), lo reportan y dicen qué comando lo crea. Solo `init`,
+    `run`, y los mutadores explícitos (`memory add/forget/revalidate`,
+    `graph index`, etc) escriben.
+    Origen 1: `doctor` creaba `arg0s.db` como side effect al chequear
     storage, y eso rompía la detección de conflicto de `arg0s init` en
     la corrida siguiente (un `arg0s.db` huérfano bloqueaba el `init`
-    posterior sin `--force`). Ver Engram `arg0s/preference/read-only-diagnostics`.
+    posterior sin `--force`).
+    Origen 2: `memory.MemoryStore.Query()` marcaba `stale` en la fila
+    como side effect de leer -- mutaba estado desde un método que el
+    CLI expone como consulta (`memory list`/`memory search`), y que el
+    Context Compiler de Fase 3 iba a llamar en cada task. Se corrigió:
+    Query() calcula y devuelve `Stale` pero nunca escribe; la escritura
+    real quedó en `Store.Revalidate()`, invocado solo por el comando
+    explícito `arg0s memory revalidate`.
+    Ver Engram `arg0s/preference/read-only-diagnostics`.
 
 ## Estado conocido del Router (Fase 2, cerrada)
 

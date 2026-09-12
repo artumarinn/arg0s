@@ -108,6 +108,29 @@ func DefaultConfig() *Config {
 			WarnAtPercent:   80,
 			OnExceed:        "block",
 		},
+		Memory: MemoryConfig{
+			Enabled:              true,
+			Backend:              "sqlite",
+			Scope:                "project",
+			MaxFragmentsPerQuery: 8,
+			MinRelevance:         0.35,
+			Decay:                DecayConfig{Enabled: true, RevalidateAfter: "30d"},
+			Categories:           []string{"DECISION", "FACT", "BUG", "PREFERENCE", "ARCHITECTURE", "TODO", "LESSON"},
+		},
+		CodeGraph: CodeGraphConfig{
+			Enabled:       true,
+			Backend:       "lsp",
+			IndexOnOpen:   true,
+			Watch:         false,
+			MaxFileSizeKB: 512,
+			Ignore:        []string{"vendor/", "node_modules/", ".git/", "dist/", "build/", "*.min.js"},
+			Servers: map[string]LSPServerConfig{
+				"go":         {Command: "gopls", Args: []string{"serve"}},
+				"python":     {Command: "pyright-langserver", Args: []string{"--stdio"}},
+				"typescript": {Command: "typescript-language-server", Args: []string{"--stdio"}},
+				"rust":       {Command: "rust-analyzer"},
+			},
+		},
 	}
 }
 

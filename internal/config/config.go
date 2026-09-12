@@ -63,12 +63,47 @@ type LimitsConfig struct {
 	OnExceed        string  `yaml:"on_exceed"`
 }
 
-// Config es la raíz de config.yaml. Solo modela las secciones que Fase 0
-// necesita validar (general, daemon, providers, runtimes, roles, router
-// básico, limits). Las secciones de subsistemas no implementados todavía
-// (fusion, judgment, context, memory, codegraph, presets) se ignoran al
-// parsear — yaml.v3 no falla ante claves desconocidas — y se agregan
-// structs propios cuando su fase llegue.
+type DecayConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	RevalidateAfter string `yaml:"revalidate_after"`
+}
+
+// MemoryConfig es sección 12 -- ver internal/memory para el modelo y
+// la interfaz MemoryStore.
+type MemoryConfig struct {
+	Enabled              bool        `yaml:"enabled"`
+	Backend              string      `yaml:"backend"` // sqlite | engram (engram no implementado todavía)
+	Scope                string      `yaml:"scope"`   // project | global | session
+	MaxFragmentsPerQuery int         `yaml:"max_fragments_per_query"`
+	MinRelevance         float64     `yaml:"min_relevance"`
+	Decay                DecayConfig `yaml:"decay"`
+	Categories           []string    `yaml:"categories,omitempty"`
+}
+
+// LSPServerConfig es una entrada de codegraph.servers -- comando y
+// args para levantar el LSP de un lenguaje.
+type LSPServerConfig struct {
+	Command string   `yaml:"command"`
+	Args    []string `yaml:"args,omitempty"`
+}
+
+// CodeGraphConfig es sección 13. Fase 3 solo implementa el backend lsp
+// con gopls -- el resto de servers queda declarado pero sin cliente
+// real (ver internal/codegraph).
+type CodeGraphConfig struct {
+	Enabled       bool                       `yaml:"enabled"`
+	Backend       string                     `yaml:"backend"` // lsp | scip | none
+	IndexOnOpen   bool                       `yaml:"index_on_open"`
+	Watch         bool                       `yaml:"watch"`
+	MaxFileSizeKB int                        `yaml:"max_file_size_kb"`
+	Ignore        []string                   `yaml:"ignore,omitempty"`
+	Servers       map[string]LSPServerConfig `yaml:"servers,omitempty"`
+}
+
+// Config es la raíz de config.yaml. Las secciones de subsistemas
+// todavía no implementados (fusion, judgment, context, presets) se
+// ignoran al parsear -- yaml.v3 no falla ante claves desconocidas --
+// y se agregan structs propios cuando su fase llegue.
 type Config struct {
 	Version   int                       `yaml:"version"`
 	General   GeneralConfig             `yaml:"general"`
@@ -78,6 +113,8 @@ type Config struct {
 	Roles     RolesConfig               `yaml:"roles"`
 	Router    RouterConfig              `yaml:"router"`
 	Limits    LimitsConfig              `yaml:"limits"`
+	Memory    MemoryConfig              `yaml:"memory"`
+	CodeGraph CodeGraphConfig           `yaml:"codegraph"`
 }
 
 // Home devuelve ~/.arg0s, respetando ARG0S_HOME si está seteada.
