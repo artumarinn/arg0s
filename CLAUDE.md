@@ -4,37 +4,34 @@ Fuente de verdad completa: [docs/ARG0S.md](docs/ARG0S.md). Este archivo
 es un resumen operativo, no un reemplazo — ante cualquier duda, gana
 docs/ARG0S.md.
 
-**Fase actual: FASE 4** -- **código completo, pendiente de verificación
-en TTY real. NO cerrada, no pasar a Fase 5 hasta cerrar esto.** Fase 0
-(fundación), Fase 1 (ejecución de modelos), Fase 2 (router) y Fase 3
-(motor de contexto) cerradas y commiteadas. Fase 4 parte A (fusion)
-cerrada de verdad (tests reales, sin dependencia de TTY). Fase 4 parte
-B (daemon + IPC + TUI): código completo y con tests, pero el daemon/
-IPC se probó contra sockets reales (eso SÍ corrió en el sandbox) y la
-TUI solo se probó a nivel de Model.Update/View sin terminal real -- el
-sandbox donde se implementó no tiene `/dev/tty`. Falta correr en una
-terminal de verdad, con Ollama u otro provider real corriendo:
+**Fase actual: FASE 5.** Fase 0 (fundación), Fase 1 (ejecución de
+modelos), Fase 2 (router), Fase 3 (motor de contexto) y Fase 4
+(fusion + daemon/IPC + TUI) cerradas y commiteadas.
 
-1. `arg0sd` + `arg0s tui submit "algo que tarde"` contra un modelo
-   real → el trace se actualiza en vivo, la UI responde a input
-   mientras llegan chunks, NO se congela. Es la propiedad que ningún
-   test unitario prueba: el event loop de Bubbletea no bloqueándose
-   bajo streaming real.
-2. ctrl+c a mitad de esa task → cancela (llega `cancelled` por el
-   socket), la TUI sigue viva; después `q` cierra.
-3. Cerrar la TUI a mitad de OTRA task (q o matar el proceso), reabrir
-   con `arg0s tui attach <task_id>` → reengancha y reconstruye el
-   estado completo (esto ya se probó a nivel de protocolo con
-   `from=0`; falta la versión con ojos humanos).
-4. (Pendiente para cuando el daemon rutee/fusione, Fase 5+): verificar
-   que una corrida de baja divergencia NO muestra un bloque FUSION
-   vacío. Hoy no aplica -- `arg0sd` solo hace GENERATION.
+Fase 4 parte B (daemon + IPC + TUI) cerrada de verdad: verificada en
+terminal real (con TTY), `arg0sd` + LM Studio (`openai_compatible`,
+sección 6) sirviendo `lmstudio-ornith-9b` vía `arg0s tui submit`. Los
+3 puntos del DoD pasaron con ojos humanos, no solo tests:
 
-Si 1-3 pasan en una terminal real, Fase 4 cierra y recién ahí esta
-línea pasa a "Fase actual: FASE 5". Si algo se cuelga o no reengancha,
-es un bug real a debuggear antes de seguir -- no saltear este paso:
-sería el mismo patrón que el bug 4 de Fase 1 (`Health()` nunca
-conectado a `doctor`, un verde que no probaba lo que importaba).
+1. Streaming real, UI no se congela -- scroll/input responden mientras
+   llegan chunks. La propiedad que ningún test unitario prueba (el
+   event loop de Bubbletea no bloqueándose bajo streaming real) SÍ se
+   probó.
+2. ctrl+c a mitad de task → `cancelled` explícito por el socket, TUI
+   sigue viva y usable; `q` cierra.
+3. Cerrar la TUI a mitad de otra task y reabrir con `arg0s tui attach
+   <task_id>` → reengancha y reconstruye el estado completo (ya se
+   había probado a nivel de protocolo con `from=0`; ahora también con
+   ojos humanos).
+
+Nota de scope, no bug: tras el attach no hay forma de mandarle otra
+instrucción a la task -- la TUI de esta fase es un visor de UNA task
+(submit → progreso → cancel/attach), no un chat multi-turno. Eso es
+lo que dice sección 18.4: `arg0sd` solo hace GENERATION, sin
+conversación. Punto 4 del DoD original (bloque FUSION no vacío en
+corridas de baja divergencia) sigue pendiente para cuando el daemon
+rutee/fusione de verdad -- no aplica todavía, `arg0sd` sigue siendo
+generación directa sin router/fusion.
 
 ## La carrera de streaming, versión IPC (resuelta en el micro-checkpoint de Parte B)
 

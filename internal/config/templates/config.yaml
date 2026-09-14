@@ -69,6 +69,16 @@ providers:
     api_key_env: CUSTOM_API_KEY
     timeout: 120s
 
+  lmstudio:
+    enabled: false                # activar a mano cuando LM Studio esté corriendo
+    type: openai_compatible
+    base_url: http://localhost:1234/v1
+    api_key_env: ""                # local, sin key
+    timeout: 300s                  # los locales son lentos
+    max_retries: 1
+    rate_limit:
+      concurrent: 1                # un modelo a la vez
+
 # ─────────────────────────────────────────────────────────────
 # RUNTIMES — agentes externos (FASE 6, dejar declarado pero disabled)
 # ─────────────────────────────────────────────────────────────

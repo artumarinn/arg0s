@@ -353,6 +353,42 @@ func TestStream_AccountsUsageOnSuccess(t *testing.T) {
 	require.Positive(t, run.Usage.CostUSD)
 }
 
+// TestStream_SendsProviderModelID_NotTheAlias es una regresión real:
+// Stream() mandaba el alias del catálogo (ej "qwen-coder-14b") tal
+// cual al provider en vez de su provider_model_id (ej
+// "qwen2.5-coder:14b") -- Execute() sí lo traducía, Stream() no. El
+// fixture de arriba (newTestExecutor/catalog) nunca lo detectó porque
+// "m1" no tenía ProviderModelID seteado (fallback == alias, bug
+// invisible); acá se registra un modelo con un ProviderModelID
+// DISTINTO de su alias y se verifica qué ID recibe el provider de
+// verdad.
+func TestStream_SendsProviderModelID_NotTheAlias(t *testing.T) {
+	var gotModelID string
+	p := mock.New(mock.Config{
+		Name: "mock",
+		ResponseFn: func(req core.Request) string {
+			gotModelID = req.ModelID
+			return "ok"
+		},
+	})
+
+	registry := providers.NewRegistry()
+	registry.Register(p)
+	cat := catalog{
+		"alias-14b": {ID: "alias-14b", Provider: p.Name(), ProviderModelID: "real-provider-id-14b"},
+	}
+	e := New(registry, cat, map[string]ProviderPolicy{p.Name(): {}}, nil)
+
+	ch, run, err := e.Stream(context.Background(), core.Request{ModelID: "alias-14b", Prompt: "hola", Role: core.RoleGenerator})
+	require.NoError(t, err)
+	for range ch {
+	}
+	require.NoError(t, run.Err)
+
+	require.Equal(t, "real-provider-id-14b", gotModelID, "el provider debe recibir provider_model_id, no el alias del catálogo")
+	require.Equal(t, "alias-14b", run.ModelID, "ModelRun.ModelID debe seguir siendo el alias, para trazabilidad")
+}
+
 func TestStream_InterruptedMidwayStillRecordsPartialUsage(t *testing.T) {
 	// ChunkDelay le da ventana real al cancel(): sin esto, un stream de
 	// contenido corto termina en microsegundos y la cancelación nunca
