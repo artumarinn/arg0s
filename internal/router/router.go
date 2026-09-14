@@ -15,15 +15,15 @@ import (
 // Router implementa el flujo de sección 8: perfilar → overrides →
 // policy check → tier → modelo → estrategia -- en ESE orden: el
 // presupuesto filtra candidatos antes de comprometerse a uno, nunca
-// después (ver selectAffordable). Fusion y Judgment no existen todavía
-// (Fase 4/5) -- SelectedStrategy siempre resuelve a "direct" en Fase
-// 2; un override que pida otra cosa queda anotado en Reasons pero no
-// se ejecuta.
+// después (ver selectAffordable). Fusion existe desde Fase 4 y el
+// router puede elegirla; Judgment sigue sin existir (Fase 5) -- un
+// override que la pida queda anotado en Reasons pero no se ejecuta.
 type Router struct {
-	cfg    config.RouterConfig
-	limits config.LimitsConfig
-	models *config.ModelsFile
-	costs  CostSource
+	cfg       config.RouterConfig
+	limits    config.LimitsConfig
+	fusionCfg config.FusionConfig
+	models    *config.ModelsFile
+	costs     CostSource
 
 	// classifierExec/classifierRole son nil-safe: solo se usan si
 	// cfg.Mode es "classifier" o "hybrid". En modo heuristic (default)
@@ -40,9 +40,9 @@ type Router struct {
 	reservedDay time.Time
 }
 
-func New(cfg config.RouterConfig, limits config.LimitsConfig, models *config.ModelsFile, costs CostSource, classifierExec *execution.Executor, classifierRole config.RoleConfig) *Router {
+func New(cfg config.RouterConfig, limits config.LimitsConfig, fusionCfg config.FusionConfig, models *config.ModelsFile, costs CostSource, classifierExec *execution.Executor, classifierRole config.RoleConfig) *Router {
 	return &Router{
-		cfg: cfg, limits: limits, models: models, costs: costs,
+		cfg: cfg, limits: limits, fusionCfg: fusionCfg, models: models, costs: costs,
 		classifierExec: classifierExec, classifierRole: classifierRole,
 	}
 }
@@ -91,12 +91,33 @@ func (r *Router) Decide(ctx context.Context, taskID, prompt string) (RoutingDeci
 	decision.SelectedModel = sel.Model
 	decision.Reasons = append(decision.Reasons, sel.Reasons...)
 
-	if ov.ForceStrategy != "" && ov.ForceStrategy != "direct" {
-		decision.Reasons = append(decision.Reasons,
-			fmt.Sprintf("override pidió strategy=%s, pero Fase 2 solo ejecuta direct -- ejecutando direct", ov.ForceStrategy))
-	}
+	decision.SelectedStrategy, decision.Reasons = r.selectStrategy(profile, ov, decision.Reasons)
 
 	return decision, nil
+}
+
+// selectStrategy elige direct vs fusion (sección 8 paso [6] + sección
+// 10.1). Un override pidiendo "fusion" siempre gana; sin override,
+// fusion entra si está enabled+adaptive y el perfil justifica escalar
+// (mismo criterio que el gate de fusion.Engine -- complexity=high o
+// confidence baja) -- el Engine igual decide puertas adentro si de
+// verdad corre secundarios, esto solo elige la ESTRATEGIA. Cualquier
+// otro valor de override (ej "judgment", Fase 5) queda anotado pero
+// clampeado a direct -- no existe todavía.
+func (r *Router) selectStrategy(profile core.TaskProfile, ov appliedOverrides, reasons []string) (string, []string) {
+	if ov.ForceStrategy == "fusion" {
+		return "fusion", reasons
+	}
+	if ov.ForceStrategy != "" && ov.ForceStrategy != "direct" {
+		return "direct", append(reasons, fmt.Sprintf("override pidió strategy=%s, no implementado todavía -- ejecutando direct", ov.ForceStrategy))
+	}
+	if ov.ForceStrategy == "" && r.fusionCfg.Enabled && r.fusionCfg.Adaptive {
+		uncertain := profile.Confidence > 0 && profile.Confidence < 0.5
+		if profile.Complexity == core.LevelHigh || uncertain {
+			return "fusion", append(reasons, "fusion habilitado y adaptativo, complexity=high o confidence baja -- fusion decide puertas adentro si de verdad corre secundarios")
+		}
+	}
+	return "direct", reasons
 }
 
 // selectAffordable filtra por presupuesto ANTES de comprometerse a un

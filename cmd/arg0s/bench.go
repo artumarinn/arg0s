@@ -10,6 +10,8 @@ import (
 
 	"github.com/artumarinn/arg0s/internal/config"
 	"github.com/artumarinn/arg0s/internal/contextc"
+	"github.com/artumarinn/arg0s/internal/core"
+	"github.com/artumarinn/arg0s/internal/orchestrator/strategies"
 )
 
 func newBenchCmd() *cobra.Command {
@@ -18,6 +20,7 @@ func newBenchCmd() *cobra.Command {
 		Short: "Benchmarks propios de Arg0s, siempre contra un baseline explícito (sección 17)",
 	}
 	cmd.AddCommand(newBenchContextCmd())
+	cmd.AddCommand(newBenchFusionCmd())
 	return cmd
 }
 
@@ -87,6 +90,75 @@ func newBenchContextCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&compareBaseline, "compare-baseline", false, "obligatorio -- compara contra mandar los archivos completos, sin esto no se reporta ningún número")
 	cmd.Flags().StringVar(&prompt, "prompt", defaultBenchPrompt, "prompt de referencia (default: caso concreto de este repo)")
+	return cmd
+}
+
+// defaultFusionBenchPrompt fuerza complexity=high a mano (no depende
+// del router) para que el gate de sección 10.1 escale siempre -- el
+// benchmark mide el ENSEMBLE, no si el router decidió activarlo.
+const defaultFusionBenchPrompt = "diseñá el manejo de errores para un pipeline de pagos con reintentos, idempotencia y compensación"
+
+func newBenchFusionCmd() *cobra.Command {
+	var prompt string
+
+	cmd := &cobra.Command{
+		Use:   "fusion",
+		Short: "Costo del ensemble + substitution_rate medido vs. primario solo -- ensemble_gain real queda pendiente de judge (sección 17.2)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			models, err := config.LoadModels()
+			if err != nil {
+				return err
+			}
+			if len(cfg.Fusion.Models) == 0 {
+				return fmt.Errorf("fusion.models está vacío en config.yaml -- no hay con qué comparar")
+			}
+			primaryModel := cfg.Fusion.Models[0]
+
+			exec := buildExecutor(cfg, models, nil)
+			task := &core.Task{Prompt: prompt, Profile: core.TaskProfile{Complexity: core.LevelHigh}}
+
+			baseline, err := strategies.NewDirect(exec, primaryModel, "").Run(cmd.Context(), task)
+			if err != nil {
+				return fmt.Errorf("baseline (primario solo): %w", err)
+			}
+
+			fusionResult, err := strategies.NewFusion(buildFusionEngine(cfg, exec), primaryModel, "").Run(cmd.Context(), task)
+			if err != nil {
+				return fmt.Errorf("fusion: %w", err)
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "prompt: %q\n\n", prompt)
+			fmt.Fprintf(out, "baseline (solo %s):  %d llamadas, $%.6f, %d+%d tokens\n",
+				primaryModel, len(baseline.ModelRuns), baseline.Usage.CostUSD, baseline.Usage.InputTokens, baseline.Usage.OutputTokens)
+			fmt.Fprintf(out, "fusion (adaptativo):    %d llamadas, $%.6f, %d+%d tokens\n",
+				len(fusionResult.ModelRuns), fusionResult.Usage.CostUSD, fusionResult.Usage.InputTokens, fusionResult.Usage.OutputTokens)
+			fmt.Fprintf(out, "costo extra del ensemble: $%.6f (%d llamada(s) extra)\n\n",
+				fusionResult.Usage.CostUSD-baseline.Usage.CostUSD, len(fusionResult.ModelRuns)-len(baseline.ModelRuns))
+
+			printFusionDecision(out, fusionResult.Metadata)
+			fmt.Fprintln(out)
+
+			winner, _ := fusionResult.Metadata["fusion_winner"].(int)
+			switch winner {
+			case 0:
+				fmt.Fprintln(out, "substitution_rate: no aplica (no hubo síntesis -- no escaló, o divergencia fuera de la banda de síntesis)")
+			case 1:
+				fmt.Fprintln(out, "substitution_rate: 0% -- el synthesizer eligió al primario igual (1 corrida)")
+			default:
+				fmt.Fprintln(out, "substitution_rate: 100% -- el synthesizer prefirió un secundario sobre el primario (1 corrida)")
+			}
+			fmt.Fprintln(out, "ensemble_gain:     pendiente -- requiere Judgment Day (Fase 5) o revisión humana, sección 17.2. No confundir con substitution_rate: sustitución mide ACTIVIDAD del synthesizer (a qué candidata le dio la razón), no CALIDAD verificada de esa elección.")
+			return nil
+		},
+		SilenceUsage: true,
+	}
+	cmd.Flags().StringVar(&prompt, "prompt", defaultFusionBenchPrompt, "prompt de referencia (default: caso concreto que fuerza escalado)")
 	return cmd
 }
 

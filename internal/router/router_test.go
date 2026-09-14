@@ -41,7 +41,7 @@ func (f fakeCostSource) CostSinceUSD(ctx context.Context, since time.Time) (floa
 func newTestRouter(t *testing.T, overrides []config.OverrideConfig, limits config.LimitsConfig, costs CostSource) *Router {
 	t.Helper()
 	cfg := config.RouterConfig{Mode: "heuristic", Tiers: testTiers(), Overrides: overrides}
-	return New(cfg, limits, testModels(), costs, nil, config.RoleConfig{})
+	return New(cfg, limits, config.FusionConfig{}, testModels(), costs, nil, config.RoleConfig{})
 }
 
 func TestDecide_SimplePrompt_PicksSimpleTier(t *testing.T) {
@@ -69,6 +69,34 @@ func TestDecide_ArchitecturePrompt_PicksComplexTier(t *testing.T) {
 	}
 }
 
+func TestDecide_FusionEnabledAndAdaptive_SelectsFusionOnHighComplexity(t *testing.T) {
+	cfg := config.RouterConfig{Mode: "heuristic", Tiers: testTiers()}
+	fusionCfg := config.FusionConfig{Enabled: true, Adaptive: true}
+	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2, PerTaskCostUSD: 0.25}, fusionCfg, testModels(), nil, nil, config.RoleConfig{})
+
+	d, err := r.Decide(context.Background(), "t1", "diseñá la arquitectura de X")
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if d.SelectedStrategy != "fusion" {
+		t.Fatalf("selected strategy = %q, want fusion (complexity=high, fusion enabled+adaptive)", d.SelectedStrategy)
+	}
+}
+
+func TestDecide_FusionEnabled_StaysDirectOnLowComplexity(t *testing.T) {
+	cfg := config.RouterConfig{Mode: "heuristic", Tiers: testTiers()}
+	fusionCfg := config.FusionConfig{Enabled: true, Adaptive: true}
+	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2, PerTaskCostUSD: 0.25}, fusionCfg, testModels(), nil, nil, config.RoleConfig{})
+
+	d, err := r.Decide(context.Background(), "t1", "cuánto es 2+2")
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if d.SelectedStrategy != "direct" {
+		t.Fatalf("selected strategy = %q, want direct (complexity=low no justifica fusion)", d.SelectedStrategy)
+	}
+}
+
 func TestDecide_ReviewHighOverride_ClampsForcedStrategyToDirect(t *testing.T) {
 	overrides := []config.OverrideConfig{
 		{When: config.OverrideWhen{Type: "review", Complexity: "high"}, ForceStrategy: "judgment"},
@@ -84,7 +112,7 @@ func TestDecide_ReviewHighOverride_ClampsForcedStrategyToDirect(t *testing.T) {
 	}
 	found := false
 	for _, reason := range d.Reasons {
-		if reason == "override pidió strategy=judgment, pero Fase 2 solo ejecuta direct -- ejecutando direct" {
+		if reason == "override pidió strategy=judgment, no implementado todavía -- ejecutando direct" {
 			found = true
 		}
 	}
@@ -176,7 +204,7 @@ func TestDecide_PerTaskCostLimitBlocks_WhenEveryTierExceedsIt(t *testing.T) {
 		"medium":  {Models: []string{"gemini-flash"}, MaxCostUSD: 0.05},
 		"complex": {Models: []string{"gemini-pro"}, MaxCostUSD: 0.10},
 	}}
-	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2.00, PerTaskCostUSD: 0.01}, testModels(), fakeCostSource{}, nil, config.RoleConfig{})
+	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2.00, PerTaskCostUSD: 0.01}, config.FusionConfig{}, testModels(), fakeCostSource{}, nil, config.RoleConfig{})
 
 	_, err := r.Decide(context.Background(), "t1", "diseñá la arquitectura de X")
 	be, ok := err.(*BudgetExceededError)
@@ -199,7 +227,7 @@ func TestDecide_ConcurrentRuns_DontBothFitOverDailyBudget(t *testing.T) {
 	cfg := config.RouterConfig{Mode: "heuristic", Tiers: map[string]config.TierConfig{
 		"simple": {Models: []string{"qwen-coder-7b"}, MaxCostUSD: 0.03},
 	}}
-	r := New(cfg, config.LimitsConfig{DailyCostUSD: 1.00, PerTaskCostUSD: 1.00}, testModels(), costs, nil, config.RoleConfig{})
+	r := New(cfg, config.LimitsConfig{DailyCostUSD: 1.00, PerTaskCostUSD: 1.00}, config.FusionConfig{}, testModels(), costs, nil, config.RoleConfig{})
 
 	var wg sync.WaitGroup
 	results := make([]error, 2)

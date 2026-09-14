@@ -8,6 +8,7 @@ import (
 	"github.com/artumarinn/arg0s/internal/config"
 	"github.com/artumarinn/arg0s/internal/contextc"
 	"github.com/artumarinn/arg0s/internal/execution"
+	"github.com/artumarinn/arg0s/internal/fusion"
 	"github.com/artumarinn/arg0s/internal/providers"
 	"github.com/artumarinn/arg0s/internal/providers/gemini"
 	"github.com/artumarinn/arg0s/internal/providers/ollama"
@@ -77,7 +78,7 @@ func buildExecutor(cfg *config.Config, models *config.ModelsFile, bus *telemetry
 // directo (sección 8/P4) -- solo se usa si router.mode es classifier
 // o hybrid.
 func buildRouter(cfg *config.Config, models *config.ModelsFile, costs router.CostSource, exec *execution.Executor) *router.Router {
-	return router.New(cfg.Router, cfg.Limits, models, costs, exec, cfg.Roles.Classifier)
+	return router.New(cfg.Router, cfg.Limits, cfg.Fusion, models, costs, exec, cfg.Roles.Classifier)
 }
 
 // buildContextCompiler arma el Context Compiler de Fase 3 parte B.
@@ -95,4 +96,13 @@ func buildContextCompiler(cfg *config.Config, db *storage.DB, exec *execution.Ex
 	}
 
 	return contextc.New(cfg.Context, memStore, cfg.Memory.MinRelevance, graph, summarizer)
+}
+
+// buildFusionEngine arma el Engine de Fase 4 parte A. El synthesizer
+// es nil-safe en fusion.Engine (se degrada al primario si divergencia
+// media y no hay con qué sintetizar) -- pero acá siempre hay executor
+// real, así que siempre se arma.
+func buildFusionEngine(cfg *config.Config, exec *execution.Executor) *fusion.Engine {
+	synth := &fusion.ExecutorSynthesizer{Exec: exec, Role: cfg.Roles.Synthesizer}
+	return fusion.New(exec, cfg.Fusion, synth)
 }

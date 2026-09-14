@@ -100,6 +100,32 @@ type CodeGraphConfig struct {
 	Servers       map[string]LSPServerConfig `yaml:"servers,omitempty"`
 }
 
+// DivergenceConfig es sección 10.2 -- método de medición de desacuerdo
+// entre modelo primario y secundarios.
+type DivergenceConfig struct {
+	Method            string  `yaml:"method"` // lexical | semantic | judge | hybrid
+	Threshold         float64 `yaml:"threshold"`
+	EscalateThreshold float64 `yaml:"escalate_threshold"`
+}
+
+// SynthesisConfig es sección 10.3.
+type SynthesisConfig struct {
+	Mode string `yaml:"mode"` // select_best | merge | critique_and_merge
+}
+
+// FusionConfig es sección 10 -- ver internal/fusion. Adaptive es la
+// palabra clave (sección 10.1): el default NO es correr todos los
+// modelos siempre, es correr el primario y solo escalar si hace falta.
+type FusionConfig struct {
+	Enabled    bool             `yaml:"enabled"`
+	Adaptive   bool             `yaml:"adaptive"`
+	Models     []string         `yaml:"models"`
+	MaxModels  int              `yaml:"max_models"`
+	Parallel   bool             `yaml:"parallel"`
+	Divergence DivergenceConfig `yaml:"divergence"`
+	Synthesis  SynthesisConfig  `yaml:"synthesis"`
+}
+
 // ContextConfig es sección 9 -- ver internal/contextc para el Context
 // Compiler. BudgetSplit son proporciones (0..1) que deben sumar ~1.0;
 // no se valida acá, el compilador simplemente usa lo que haya.
@@ -112,9 +138,9 @@ type ContextConfig struct {
 }
 
 // Config es la raíz de config.yaml. Las secciones de subsistemas
-// todavía no implementados (fusion, judgment, presets) se ignoran al
-// parsear -- yaml.v3 no falla ante claves desconocidas -- y se agregan
-// structs propios cuando su fase llegue.
+// todavía no implementados (judgment, presets) se ignoran al parsear
+// -- yaml.v3 no falla ante claves desconocidas -- y se agregan structs
+// propios cuando su fase llegue.
 type Config struct {
 	Version   int                       `yaml:"version"`
 	General   GeneralConfig             `yaml:"general"`
@@ -127,6 +153,7 @@ type Config struct {
 	Memory    MemoryConfig              `yaml:"memory"`
 	CodeGraph CodeGraphConfig           `yaml:"codegraph"`
 	Context   ContextConfig             `yaml:"context"`
+	Fusion    FusionConfig              `yaml:"fusion"`
 }
 
 // Home devuelve ~/.arg0s, respetando ARG0S_HOME si está seteada.

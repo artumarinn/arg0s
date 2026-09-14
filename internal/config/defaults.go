@@ -131,6 +131,17 @@ func DefaultConfig() *Config {
 				"rust":       {Command: "rust-analyzer"},
 			},
 		},
+		Fusion: FusionConfig{
+			Enabled: true, Adaptive: true, MaxModels: 3, Parallel: true,
+			Models: []string{"gemini-flash", "qwen-coder-14b"},
+			// method:lexical acá, NO "hybrid" como en el config.yaml de
+			// ejemplo (sección 6.3, template embebido) -- Fase 4 solo
+			// implementa lexical de verdad; "hybrid" caería a lexical
+			// igual (no hay judge todavía, Fase 5) así que el default
+			// compilado dice lo que realmente hace, sin prometer más.
+			Divergence: DivergenceConfig{Method: "lexical", Threshold: 0.15, EscalateThreshold: 0.45},
+			Synthesis:  SynthesisConfig{Mode: "select_best"},
+		},
 		Context: ContextConfig{
 			DefaultBudgetTokens: 16000,
 			ReserveOutputTokens: 4000,

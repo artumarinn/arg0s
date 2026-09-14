@@ -72,7 +72,7 @@ func TestDecide_ClassifierMode_EndToEnd(t *testing.T) {
 	exec := execution.New(reg, models, map[string]execution.ProviderPolicy{}, nil)
 
 	cfg := config.RouterConfig{Mode: "classifier", Tiers: testTiers()}
-	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2, PerTaskCostUSD: 0.25}, models, nil, exec, config.RoleConfig{Model: "classifier-model"})
+	r := New(cfg, config.LimitsConfig{DailyCostUSD: 2, PerTaskCostUSD: 0.25}, config.FusionConfig{}, models, nil, exec, config.RoleConfig{Model: "classifier-model"})
 
 	d, err := r.Decide(context.Background(), "t1", "cualquier prompt, lo decide el classifier mock")
 	if err != nil {

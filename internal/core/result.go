@@ -39,4 +39,8 @@ type Result struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 	Err       error
+	// Metadata es extra por-strategy que no amerita su propio campo acá
+	// -- ej fusion.Result.Decision/Divergence, para que `arg0s run`
+	// pueda mostrar "no escaló" / "sintetizó" sin que core importe fusion.
+	Metadata map[string]any
 }

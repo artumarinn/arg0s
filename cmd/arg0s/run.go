@@ -22,6 +22,7 @@ import (
 
 func newRunCmd() *cobra.Command {
 	var modelFlag string
+	var strategyFlag string
 	var stream bool
 	var jsonOut bool
 
@@ -30,11 +31,15 @@ func newRunCmd() *cobra.Command {
 		Short: "Ejecuta un prompt contra un modelo",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTask(cmd, args[0], modelFlag, stream, jsonOut)
+			if strategyFlag != "" && strategyFlag != "direct" && strategyFlag != "fusion" {
+				return fmt.Errorf("--strategy %q inválido -- valores soportados: direct, fusion", strategyFlag)
+			}
+			return runTask(cmd, args[0], modelFlag, strategyFlag, stream, jsonOut)
 		},
 		SilenceUsage: true,
 	}
 	cmd.Flags().StringVar(&modelFlag, "model", "", "modelo a usar (vacío = el router lo elige)")
+	cmd.Flags().StringVar(&strategyFlag, "strategy", "", "direct|fusion (vacío = el router decide, o direct si --model)")
 	cmd.Flags().BoolVar(&stream, "stream", false, "muestra la respuesta en streaming")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "salida estructurada en JSON")
 	cmd.AddCommand(newRunShowCmd())
@@ -58,7 +63,7 @@ func statusFor(err error) string {
 	return "ok"
 }
 
-func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) error {
+func runTask(cmd *cobra.Command, prompt, modelID, strategyFlag string, stream, jsonOut bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -86,18 +91,31 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 	runID := storage.NewRunID()
 
 	var profileJSON, routingJSON string
+	strategyName := strategyFlag
+	var profile core.TaskProfile
 	if modelID == "" {
 		decision, err := buildRouter(cfg, models, db, exec).Decide(ctx, runID, prompt)
 		if err != nil {
 			return err
 		}
 		modelID = decision.SelectedModel
+		profile = core.TaskProfile{Complexity: decision.Profile.Complexity, Confidence: decision.ClassifierConfidence}
+		if strategyName == "" {
+			strategyName = decision.SelectedStrategy
+		}
 		if b, err := json.Marshal(decision.Profile); err == nil {
 			profileJSON = string(b)
 		}
 		if b, err := json.Marshal(decision); err == nil {
 			routingJSON = string(b)
 		}
+	}
+	if strategyName == "" {
+		strategyName = "direct"
+	}
+
+	if stream && strategyName == "fusion" {
+		return fmt.Errorf("fusion no soporta --stream todavía -- corré sin --stream")
 	}
 
 	cwd, _ := os.Getwd()
@@ -112,8 +130,13 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 		return runStreaming(cmd, ctx, db, cfg, models, runID, sessionID, prompt, modelID, fallback, profileJSON, routingJSON, jsonOut)
 	}
 
-	strat := strategies.NewDirect(exec, modelID, fallback)
-	task := &core.Task{ID: core.TaskID(runID), SessionID: core.SessionID(sessionID), Prompt: prompt, CreatedAt: time.Now()}
+	var strat strategies.Strategy
+	if strategyName == "fusion" {
+		strat = strategies.NewFusion(buildFusionEngine(cfg, exec), modelID, fallback)
+	} else {
+		strat = strategies.NewDirect(exec, modelID, fallback)
+	}
+	task := &core.Task{ID: core.TaskID(runID), SessionID: core.SessionID(sessionID), Prompt: prompt, CreatedAt: time.Now(), Profile: profile}
 	result, runErr := strat.Run(ctx, task)
 
 	status := "completed"
@@ -141,6 +164,7 @@ func runTask(cmd *cobra.Command, prompt, modelID string, stream, jsonOut bool) e
 	}
 
 	if !jsonOut {
+		printFusionDecision(cmd.OutOrStdout(), result.Metadata)
 		for _, mr := range result.ModelRuns {
 			printFallbackWarning(cmd.OutOrStdout(), mr)
 		}
@@ -234,6 +258,31 @@ func persistRun(db *storage.DB, run storage.Run, modelRuns []core.ModelRun, mode
 		if err := db.InsertModelRun(ctx, row); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: no se pudo persistir el model_run: %v\n", err)
 		}
+	}
+}
+
+// printFusionDecision hace visible en salida normal cómo terminó una
+// corrida de fusion -- checkpoint de Fase 4: "el output debe DECIR que
+// no escaló" (o que sintetizó, o que escaló a Judgment Day). No hace
+// nada si la estrategia no fue fusion (Metadata sin esas claves).
+func printFusionDecision(out io.Writer, metadata map[string]any) {
+	decision, ok := metadata["fusion_decision"].(string)
+	if !ok {
+		return
+	}
+	escalated, _ := metadata["fusion_escalated"].(bool)
+	if !escalated {
+		fmt.Fprintln(out, "ⓕ fusion: no escaló -- el primario alcanzaba, 0 llamadas extra")
+		return
+	}
+	divergence, _ := metadata["fusion_divergence"].(float64)
+	switch decision {
+	case "primary":
+		fmt.Fprintf(out, "ⓕ fusion: corrió secundarios, divergencia %.2f (baja) -- se queda con el primario\n", divergence)
+	case "synthesized":
+		fmt.Fprintf(out, "ⓕ fusion: divergencia %.2f -- sintetizó con select_best\n", divergence)
+	case "escalate":
+		fmt.Fprintf(out, "⚠ fusion: divergencia %.2f (alta) -- señalado para Judgment Day (Fase 5, todavía no ejecuta), devolviendo el primario\n", divergence)
 	}
 }
 
