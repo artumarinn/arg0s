@@ -93,6 +93,20 @@ func (g *Graph) ImpactSet(ctx context.Context, project string, symbolIDs []strin
 	return out, nil
 }
 
+// SymbolsInFile lista los symbols indexados de un archivo -- usado por
+// el Context Compiler para leer TODO lo relevante de un archivo que un
+// hint de path apuntó, sin tener ya un nombre de símbolo exacto.
+func (g *Graph) SymbolsInFile(ctx context.Context, project, file string) ([]Symbol, error) {
+	rows, err := g.db.QueryContext(ctx, `
+		SELECT id, project, name, kind, file, line_start, line_end, COALESCE(signature,''), COALESCE(doc,''), COALESCE(language,''), indexed_at
+		FROM symbols WHERE project = ? AND file = ? ORDER BY line_start`, project, file)
+	if err != nil {
+		return nil, fmt.Errorf("codegraph: symbols in file %q: %w", file, err)
+	}
+	defer rows.Close()
+	return scanSymbols(rows)
+}
+
 // RelatedFiles busca símbolos cuyo nombre matchea query (substring,
 // sin ranking semántico -- mismo espíritu lexical que
 // internal/memory/sqlite.Relevance) y devuelve los archivos donde

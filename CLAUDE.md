@@ -38,10 +38,10 @@ que estamos".
     mutar una fila como side effect de haber leído. Ejemplos ya
     cubiertos: `doctor`, `providers list`, `models list`, `graph
     query`/`graph callers`, `session show`, `cost`, `memory
-    list`/`memory search`. Si falta algo (la db no existe, no hay
-    datos), lo reportan y dicen qué comando lo crea. Solo `init`,
-    `run`, y los mutadores explícitos (`memory add/forget/revalidate`,
-    `graph index`, etc) escriben.
+    list`/`memory search`, `context preview`, `bench context`. Si
+    falta algo (la db no existe, no hay datos), lo reportan y dicen qué
+    comando lo crea. Solo `init`, `run`, y los mutadores explícitos
+    (`memory add/forget/revalidate`, `graph index`, etc) escriben.
     Origen 1: `doctor` creaba `arg0s.db` como side effect al chequear
     storage, y eso rompía la detección de conflicto de `arg0s init` en
     la corrida siguiente (un `arg0s.db` huérfano bloqueaba el `init`
@@ -76,3 +76,26 @@ que estamos".
   para no pisarse entre goroutines de UN MISMO proceso. **No** protege
   contra dos procesos `arg0s run` separados corriendo a la vez; eso
   necesita el daemon (Fase 4).
+
+## Estado conocido del Context Compiler (Fase 3 parte B)
+
+- Tokens: `contextc.EstimateTokens` es `len(s)/4` -- no hay tokenizer
+  real integrado. `arg0s bench context` compara compilado vs. baseline
+  con la MISMA función en los dos lados, así que la comparación es
+  válida aunque el número absoluto sea una aproximación.
+- `budget_split.graph` queda reservado sin gastar: el contenido real
+  que localiza el grafo (rangos de código leídos del disco) se
+  contabiliza en `code`, no en `graph` -- sección 13, "el grafo
+  localiza, no reemplaza". Si se agrega un fragmento de puro resumen
+  estructural (ej "callers de X: A, B, C" como texto plano), ESE
+  consumiría `graph`.
+- `arg0s bench context` solo mide la categoría `code` (codegraph +
+  file) contra mandar los archivos completos -- memory/skills quedan
+  afuera de la comparación a propósito porque son idénticos en ambos
+  escenarios (ver comentario de `codeVsBaselineTokens` en
+  cmd/arg0s/bench.go).
+- Compresión: `applyBudget` intenta comprimir el fragmento MÁS GRANDE
+  de la categoría (vía el rol `summarizer`) antes de excluir nada,
+  acotado a `maxCompressionAttempts=3`; si el summarizer no está
+  disponible (sin executor, o `context.compress_when_over: false`) cae
+  directo al fallback de exclusión, sin error.

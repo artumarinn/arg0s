@@ -131,6 +131,16 @@ func DefaultConfig() *Config {
 				"rust":       {Command: "rust-analyzer"},
 			},
 		},
+		Context: ContextConfig{
+			DefaultBudgetTokens: 16000,
+			ReserveOutputTokens: 4000,
+			BudgetSplit: map[string]float64{
+				"prompt": 0.10, "code": 0.45, "graph": 0.10,
+				"memory": 0.20, "skills": 0.10, "artifacts": 0.05,
+			},
+			CompressWhenOver: true,
+			CompressionModel: "summarizer",
+		},
 	}
 }
 

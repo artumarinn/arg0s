@@ -100,10 +100,21 @@ type CodeGraphConfig struct {
 	Servers       map[string]LSPServerConfig `yaml:"servers,omitempty"`
 }
 
+// ContextConfig es sección 9 -- ver internal/contextc para el Context
+// Compiler. BudgetSplit son proporciones (0..1) que deben sumar ~1.0;
+// no se valida acá, el compilador simplemente usa lo que haya.
+type ContextConfig struct {
+	DefaultBudgetTokens int                `yaml:"default_budget_tokens"`
+	ReserveOutputTokens int                `yaml:"reserve_output_tokens"`
+	BudgetSplit         map[string]float64 `yaml:"budget_split"`
+	CompressWhenOver    bool               `yaml:"compress_when_over"`
+	CompressionModel    string             `yaml:"compression_model"` // nombre de rol, ej "summarizer"
+}
+
 // Config es la raíz de config.yaml. Las secciones de subsistemas
-// todavía no implementados (fusion, judgment, context, presets) se
-// ignoran al parsear -- yaml.v3 no falla ante claves desconocidas --
-// y se agregan structs propios cuando su fase llegue.
+// todavía no implementados (fusion, judgment, presets) se ignoran al
+// parsear -- yaml.v3 no falla ante claves desconocidas -- y se agregan
+// structs propios cuando su fase llegue.
 type Config struct {
 	Version   int                       `yaml:"version"`
 	General   GeneralConfig             `yaml:"general"`
@@ -115,6 +126,7 @@ type Config struct {
 	Limits    LimitsConfig              `yaml:"limits"`
 	Memory    MemoryConfig              `yaml:"memory"`
 	CodeGraph CodeGraphConfig           `yaml:"codegraph"`
+	Context   ContextConfig             `yaml:"context"`
 }
 
 // Home devuelve ~/.arg0s, respetando ARG0S_HOME si está seteada.

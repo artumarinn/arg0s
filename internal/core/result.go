@@ -11,6 +11,7 @@ const (
 	RoleSynthesizer Role = "synthesizer"
 	RoleFix         Role = "fix"
 	RoleClassifier  Role = "classifier"
+	RoleSummarizer  Role = "summarizer"
 )
 
 // ModelRun traza una llamada individual a un modelo dentro de un Result.

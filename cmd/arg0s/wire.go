@@ -4,13 +4,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/artumarinn/arg0s/internal/codegraph"
 	"github.com/artumarinn/arg0s/internal/config"
+	"github.com/artumarinn/arg0s/internal/contextc"
 	"github.com/artumarinn/arg0s/internal/execution"
 	"github.com/artumarinn/arg0s/internal/providers"
 	"github.com/artumarinn/arg0s/internal/providers/gemini"
 	"github.com/artumarinn/arg0s/internal/providers/ollama"
 	openaicompatible "github.com/artumarinn/arg0s/internal/providers/openai_compatible"
 	"github.com/artumarinn/arg0s/internal/router"
+	"github.com/artumarinn/arg0s/internal/storage"
 	"github.com/artumarinn/arg0s/internal/telemetry"
 )
 
@@ -75,4 +78,21 @@ func buildExecutor(cfg *config.Config, models *config.ModelsFile, bus *telemetry
 // o hybrid.
 func buildRouter(cfg *config.Config, models *config.ModelsFile, costs router.CostSource, exec *execution.Executor) *router.Router {
 	return router.New(cfg.Router, cfg.Limits, models, costs, exec, cfg.Roles.Classifier)
+}
+
+// buildContextCompiler arma el Context Compiler de Fase 3 parte B.
+// exec/summarizerRole son nil-safe -- si no hay executor (ej `arg0s
+// context preview` corriendo sin providers configurados), simplemente
+// no hay compresión disponible y applyBudget cae al fallback de
+// exclusión (comportamiento correcto, no un error).
+func buildContextCompiler(cfg *config.Config, db *storage.DB, exec *execution.Executor) *contextc.Compiler {
+	memStore := buildMemoryStore(cfg, db)
+	graph := codegraph.NewGraph(db.DB)
+
+	var summarizer contextc.Summarizer
+	if exec != nil && cfg.Context.CompressWhenOver && cfg.Roles.Summarizer.Model != "" {
+		summarizer = &contextc.ExecutorSummarizer{Exec: exec, Role: cfg.Roles.Summarizer}
+	}
+
+	return contextc.New(cfg.Context, memStore, cfg.Memory.MinRelevance, graph, summarizer)
 }
