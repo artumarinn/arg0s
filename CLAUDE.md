@@ -9,36 +9,36 @@ parte B -- daemon + TUI -- en curso). Fase 0 (fundación), Fase 1
 (ejecución de modelos), Fase 2 (router) y Fase 3 (motor de contexto)
 cerradas y commiteadas.
 
-## ⚠ RIESGO PRINCIPAL DE FASE 4 PARTE B: la carrera de streaming, versión IPC
+## La carrera de streaming, versión IPC (resuelta en el micro-checkpoint de Parte B)
 
 La misma clase de bug de `internal/execution/stream.go` (Engram
-`arg0s/lesson/stream-ctx-race`) tiene TRES apariciones en este
-proyecto, cada una más difícil que la anterior:
+`arg0s/lesson/stream-ctx-race`) tuvo TRES apariciones en este proyecto,
+cada una más difícil que la anterior:
 
 1. **Fase 1** -- `Executor.Stream` consumido por un `for-range` directo
-   en el mismo proceso. Ya resuelto (comentario inline en stream.go).
+   en el mismo proceso. Resuelto (comentario inline en stream.go).
 2. **Fase 4 parte A** -- `fusion.Engine.runSecondaries` consumido por
-   goroutines paralelas EN EL MISMO PROCESO. Ya resuelto y testeado
+   goroutines paralelas EN EL MISMO PROCESO. Resuelto y testeado
    (`TestRunSecondaries_OneFailsFast_...`, internal/fusion/fusion_test.go).
-3. **Fase 4 parte B (ACÁ, todavía sin resolver)** -- el daemon streamea
-   eventos a la TUI **cruzando un proceso** vía IPC (Unix socket,
-   sección 18.2). Es la versión más difícil de las tres: no hay
-   happens-before de un `close()` de canal Go garantizándote nada --
-   hay que definir explícitamente en el protocolo cómo se marca "esto
-   terminó bien" vs. "esto se cortó" (mensaje final explícito tipo
-   `task.done`/`task.cancelled`/`task.failed`, no inferirlo de que el
-   socket se cerró o de que dejaron de llegar mensajes). Un cliente
-   (la TUI) que reconecta después de cerrarse (DoD de Fase 4: "cerrar
-   la TUI a mitad de una task y reabrirla → reengancha") tiene el
-   MISMO problema que el for-range de stream.go: si asume "no me llegó
-   nada más" == "la task terminó bien", va a mostrar como exitosa una
-   task que en realidad se cayó mientras la TUI estaba cerrada.
-
-**No arrancar el diseño del protocolo IPC sin un mensaje de cierre
-explícito y sin ambigüedad en el wire format.** Este es el punto de
-mayor riesgo de toda la Parte B, no una nota al pie -- el
-micro-checkpoint del cliente tonto (punto 1 de la Parte B) existe
-específicamente para verificar esto ANTES de meter Bubbletea encima.
+3. **Fase 4 parte B** -- el daemon streamea eventos a un cliente
+   **cruzando un proceso** vía IPC (Unix socket, sección 18.2). Era la
+   versión más difícil: no hay happens-before de un `close()` de canal
+   Go cruzando un socket. **Resuelto así** (internal/ipc/):
+   - `Event.Type` es siempre uno de `chunk|done|failed|cancelled` --
+     `task.run` (internal/ipc/server.go) SIEMPRE manda exactamente un
+     evento terminal antes de dejar de escribir, nunca infiere éxito
+     del silencio ni del cierre del socket.
+   - `task.Subscribe` (internal/ipc/task.go) guarda TODO el historial
+     de eventos y hace replay desde `from` -- un cliente que se
+     reconecta (DoD: "cerrar la TUI a mitad de una task y reabrirla →
+     reengancha") pide `events.subscribe` de nuevo y recibe el
+     historial completo más lo que falte, nunca un hueco.
+   - Probado con un socket Unix REAL, no un mock de la capa IPC:
+     `TestSubscribe_Reconnect_ReplaysFromZero` cierra un cliente a
+     mitad de un stream y abre uno nuevo, que recibe el contenido
+     completo. `TestCancel_MidStream_ProducesExplicitCancelledEvent`
+     prueba que `task.cancel` corta una task viva y el evento
+     `cancelled` llega explícito, no un socket que se cierra sin más.
 
 ## Reglas duras
 
@@ -185,3 +185,31 @@ que estamos".
   verdes, incluido el test de paralelismo con fallo) contra el
   provider mock. Antes de confiar en el comportamiento contra un
   modelo real, correrlo una vez con providers configurados.
+
+## Estado conocido de IPC/daemon (Fase 4 parte B, punto 1 -- daemon + cliente tonto)
+
+- `arg0sd` (cmd/arg0sd/) es un binario NUEVO y separado de `arg0s`
+  (sección 18.1) -- duplica ~15 líneas de wiring de providers/executor
+  de cmd/arg0s/wire.go a propósito (dos binarios, cada uno arma el
+  suyo); si esa duplicación crece se extrae a un paquete compartido,
+  hoy no amerita la indirección.
+- `arg0s daemon submit/cancel/ping` es el "cliente tonto" del
+  checkpoint -- imprime eventos crudos (`[chunk]`/`[done]`/`[failed]`/
+  `[cancelled]`), no interpreta nada. La TUI (punto 2 de la Parte B)
+  reemplaza esto, pero el cliente tonto queda para debug de arg0sd sin
+  levantar Bubbletea.
+- `daemon.socket` default `~/.arg0s/daemon.sock` se resuelve con
+  `Config.SocketPath()` (internal/config/config.go) -- respeta
+  ARG0S_HOME igual que el resto del sistema.
+- Diseño de `internal/ipc/task.go`: un solo `task` en memoria por
+  `task_id`, con TODO el historial de eventos guardado (no hay límite
+  ni rotación todavía) y un broadcast simple (`notify chan struct{}`
+  que se cierra y recrea en cada evento nuevo) para que múltiples
+  `Subscribe` concurrentes o secuenciales lean desde cualquier punto.
+  Sin persistencia en disco: si `arg0sd` muere, se pierde el historial
+  de tasks en vuelo -- aceptable para Fase 4 (reengancharse es
+  reconectar al MISMO proceso de arg0sd, no sobrevivir su reinicio).
+- `ListenAndServe` borra un socket huérfano existente antes de
+  escuchar (`os.Remove` + `IsNotExist` check) -- un `arg0sd` anterior
+  que murió mal (sin limpiar su socket) no debe impedir que el
+  siguiente arranque.

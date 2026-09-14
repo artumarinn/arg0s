@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -166,6 +167,30 @@ func Home() (string, error) {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
 	return filepath.Join(home, ".arg0s"), nil
+}
+
+// SocketPath resuelve daemon.socket a un path absoluto. El default
+// ("~/.arg0s/daemon.sock") se expande contra Home() -- así respeta
+// ARG0S_HOME igual que el resto del sistema (tests aislados, perfiles
+// múltiples). Un override genérico tipo "~/otro/lado" usa el HOME real
+// del usuario, no Home(), porque ya no está bajo el árbol de arg0s.
+func (cfg *Config) SocketPath() (string, error) {
+	s := cfg.Daemon.Socket
+	if strings.HasPrefix(s, "~/.arg0s/") {
+		home, err := Home()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(home, strings.TrimPrefix(s, "~/.arg0s/")), nil
+	}
+	if strings.HasPrefix(s, "~/") {
+		realHome, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(realHome, strings.TrimPrefix(s, "~/")), nil
+	}
+	return s, nil
 }
 
 // Load aplica la precedencia completa y devuelve el Config resultante.

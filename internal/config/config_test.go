@@ -8,6 +8,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSocketPath_DefaultExpandsAgainstHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("ARG0S_HOME", home)
+
+	cfg := DefaultConfig()
+	got, err := cfg.SocketPath()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(home, "daemon.sock"), got)
+}
+
+func TestSocketPath_AbsoluteOverridePassesThrough(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Daemon.Socket = "/tmp/custom.sock"
+	got, err := cfg.SocketPath()
+	require.NoError(t, err)
+	require.Equal(t, "/tmp/custom.sock", got)
+}
+
 func TestLoad_DefaultsWhenNoFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("ARG0S_HOME", home)
