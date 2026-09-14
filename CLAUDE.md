@@ -4,10 +4,37 @@ Fuente de verdad completa: [docs/ARG0S.md](docs/ARG0S.md). Este archivo
 es un resumen operativo, no un reemplazo — ante cualquier duda, gana
 docs/ARG0S.md.
 
-**Fase actual: FASE 4** (fusion + TUI, parte A -- fusion -- cerrada;
-parte B -- daemon + TUI -- en curso). Fase 0 (fundación), Fase 1
-(ejecución de modelos), Fase 2 (router) y Fase 3 (motor de contexto)
-cerradas y commiteadas.
+**Fase actual: FASE 4** -- **código completo, pendiente de verificación
+en TTY real. NO cerrada, no pasar a Fase 5 hasta cerrar esto.** Fase 0
+(fundación), Fase 1 (ejecución de modelos), Fase 2 (router) y Fase 3
+(motor de contexto) cerradas y commiteadas. Fase 4 parte A (fusion)
+cerrada de verdad (tests reales, sin dependencia de TTY). Fase 4 parte
+B (daemon + IPC + TUI): código completo y con tests, pero el daemon/
+IPC se probó contra sockets reales (eso SÍ corrió en el sandbox) y la
+TUI solo se probó a nivel de Model.Update/View sin terminal real -- el
+sandbox donde se implementó no tiene `/dev/tty`. Falta correr en una
+terminal de verdad, con Ollama u otro provider real corriendo:
+
+1. `arg0sd` + `arg0s tui submit "algo que tarde"` contra un modelo
+   real → el trace se actualiza en vivo, la UI responde a input
+   mientras llegan chunks, NO se congela. Es la propiedad que ningún
+   test unitario prueba: el event loop de Bubbletea no bloqueándose
+   bajo streaming real.
+2. ctrl+c a mitad de esa task → cancela (llega `cancelled` por el
+   socket), la TUI sigue viva; después `q` cierra.
+3. Cerrar la TUI a mitad de OTRA task (q o matar el proceso), reabrir
+   con `arg0s tui attach <task_id>` → reengancha y reconstruye el
+   estado completo (esto ya se probó a nivel de protocolo con
+   `from=0`; falta la versión con ojos humanos).
+4. (Pendiente para cuando el daemon rutee/fusione, Fase 5+): verificar
+   que una corrida de baja divergencia NO muestra un bloque FUSION
+   vacío. Hoy no aplica -- `arg0sd` solo hace GENERATION.
+
+Si 1-3 pasan en una terminal real, Fase 4 cierra y recién ahí esta
+línea pasa a "Fase actual: FASE 5". Si algo se cuelga o no reengancha,
+es un bug real a debuggear antes de seguir -- no saltear este paso:
+sería el mismo patrón que el bug 4 de Fase 1 (`Health()` nunca
+conectado a `doctor`, un verde que no probaba lo que importaba).
 
 ## La carrera de streaming, versión IPC (resuelta en el micro-checkpoint de Parte B)
 
@@ -213,3 +240,45 @@ que estamos".
   escuchar (`os.Remove` + `IsNotExist` check) -- un `arg0sd` anterior
   que murió mal (sin limpiar su socket) no debe impedir que el
   siguiente arranque.
+
+## Estado conocido de la TUI (Fase 4 parte B, punto 2)
+
+- internal/tui/ es SOLO presentación (P1): `Model` no importa router,
+  fusion, ni execution -- solo `internal/ipc` (para el tipo `Event` y
+  la interfaz mínima `canceller`). `arg0s tui submit`/`arg0s tui
+  attach` (cmd/arg0s/tui.go) arman el `*ipc.Client` y el
+  `tea.Program`, la Model nunca decide nada de negocio.
+- **Un solo bloque hoy: GENERATION.** `arg0sd` todavía corre generación
+  directa (un modelo, sin pasar por router/fusion -- ver
+  cmd/arg0sd/main.go, sin cambios en esta parte). Render progresivo
+  (sección 18.4) se cumple trivialmente con un bloque: pending → running
+  (primer chunk) → done/failed/cancelled. **No hay bloques ROUTER/FUSION
+  todavía** porque el daemon no emite esas fases -- agregarlos ahora
+  sería mostrar paneles vacíos por diseño, exactamente lo que sección
+  18.4 dice que no hay que hacer. Cuando `arg0sd` empiece a rutear/
+  fusionar de verdad, ESE es el momento de agregar `Event` de fase y
+  los bloques correspondientes.
+- ctrl+c: cancela la task (`task.cancel` vía IPC) sin salir de la TUI
+  mientras está pending/running; si ya terminó, no hay nada que
+  cancelar y actúa como salir. `q` siempre cierra la TUI sin cancelar
+  -- la task sigue viva en `arg0sd` (proceso separado), reabrir es
+  `arg0s tui attach <task_id>`.
+- Reenganche: `attach` vuelve a pedir `events.subscribe` con `from=0`
+  contra el `task_id` -- reconstruye el Model completo desde el
+  historial que guarda `internal/ipc/task.go` (Fase 4 parte B punto 1).
+  No hay tracking de "hasta dónde vio el cliente anterior" -- cada
+  attach trae el historial completo, no un delta.
+- **No se pudo demostrar la TUI corriendo interactivamente** en la
+  sesión donde se implementó esto -- el sandbox no tiene TTY
+  (`open /dev/tty: no such device or address`), y tampoco hay un
+  provider real configurado (mismo límite que Fusion). La evidencia de
+  este checkpoint son los 8 tests de `internal/tui/model_test.go`
+  (`go test ./internal/tui/... -race -v`) que ejercitan `Update`/`View`
+  directamente sin terminal real: arranca pending, chunk→running con
+  contenido acumulado, done/failed explícitos, ctrl+c cancela sin
+  salir mientras corre pero sí sale si ya terminó, `q` nunca cancela,
+  y un replay completo desde cero reconstruye el mismo estado que en
+  vivo. La capa IPC que la TUI consume (streaming, cancelación,
+  reconexión) ya estaba probada contra un socket real en el punto 1.
+  Antes de confiar en la experiencia interactiva real, correrla una
+  vez en una terminal de verdad con providers configurados.

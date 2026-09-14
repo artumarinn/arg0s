@@ -35,5 +35,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newContextCmd())
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newTUICmd())
 	return root
 }
